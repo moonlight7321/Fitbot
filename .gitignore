@@ -1,0 +1,10 @@
+.env
+drafts.json
+drafts.json.tmp
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
