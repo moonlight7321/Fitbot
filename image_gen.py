@@ -26,6 +26,9 @@ AUTH_KEY = os.getenv("GIGACHAT_AUTH_KEY", "")
 # Модель и scope вынесены в .env: на другом тарифе/аккаунте они отличаются
 MODEL = os.getenv("GIGACHAT_MODEL", "GigaChat-3-Ultra")
 SCOPE = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
+# Дефолтные 30 с из SDK обрывают чтение: Kandinsky рисует 30–60 с
+TIMEOUT = float(os.getenv("GIGACHAT_TIMEOUT", "120"))
+RETRIES = int(os.getenv("GIGACHAT_RETRIES", "1"))
 
 # Если модель не прислала промт картинки — используем нейтральный дефолт
 FALLBACK_PROMPT = (
@@ -77,6 +80,17 @@ MAX_BASE_CHARS = 200
 _last_combo: Tuple[str, ...] = ()
 
 
+def _trim_scene(scene: str, limit: int) -> str:
+    """Обрезает сцену по границе слова: промт не должен кончаться на «сосредо»."""
+    if len(scene) <= limit:
+        return scene
+    cut = scene[:limit]
+    boundary = max(cut.rfind(" "), cut.rfind(","), cut.rfind(";"), cut.rfind("."))
+    if boundary > limit // 2:
+        cut = cut[:boundary]
+    return cut.rstrip(" ,;:.-")
+
+
 def build_prompt(base: str) -> str:
     """Собирает промт: сцена от модели + случайные ракурс, свет, палитра, формат.
 
@@ -86,7 +100,7 @@ def build_prompt(base: str) -> str:
     global _last_combo
 
     scene = (base or "").strip().rstrip(" .;,") or FALLBACK_PROMPT
-    scene = scene[:MAX_BASE_CHARS]
+    scene = _trim_scene(scene, MAX_BASE_CHARS)
 
     combo: Tuple[str, ...] = ()
     for _ in range(6):
@@ -105,7 +119,7 @@ def build_prompt(base: str) -> str:
     if len(prompt) > MAX_PROMPT_CHARS:
         # режем сцену, а не модификаторы: они и дают разнообразие
         overflow = len(prompt) - MAX_PROMPT_CHARS
-        scene = scene[: max(60, len(scene) - overflow)]
+        scene = _trim_scene(scene, max(60, len(scene) - overflow))
         prompt = ", ".join([scene.rstrip(" ,"), *combo, NO_TEXT])
     return prompt
 
@@ -122,6 +136,8 @@ def _generate_sync(prompt: str) -> bytes:
         credentials=AUTH_KEY,
         model=MODEL,
         scope=SCOPE,
+        timeout=TIMEOUT,        # иначе чтение обрывается на 30-й секунде
+        max_retries=RETRIES,
         verify_ssl_certs=False,  # у GigaChat собственный УЦ, без этого SSL падает
     ) as gc:
         response = gc.chat(
