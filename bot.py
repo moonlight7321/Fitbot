@@ -40,7 +40,7 @@ from aiogram.types import (
 
 from ai_client import AIError, DeepSeekClient, check_length, clean_post, parse_sections
 from config import Settings, load_settings
-from image_gen import fetch_image
+from image_gen import fetch_image, log_build_info
 from scheduler import create_scheduler, describe_schedule
 
 logger = logging.getLogger(__name__)
@@ -567,6 +567,8 @@ async def main() -> None:
     )
 
     settings = load_settings()
+    log_build_info()  # маркер сборки: только теперь у logging есть обработчик
+
     bot = Bot(
         token=settings.telegram_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),

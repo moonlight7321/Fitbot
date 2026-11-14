@@ -77,11 +77,16 @@ NO_TEXT = "без текста, без надписей, без логотипо
 MAX_PROMPT_CHARS = 400   # длиннее Kandinsky начинает терять детали
 MAX_BASE_CHARS = 200
 
-# Маркер сборки: по этой строке в старте лога видно, какая версия реально запущена
-logger.info(
-    "image_gen: модель=%s, таймаут=%s c, ретраи=%s, вариации промта включены",
-    MODEL, TIMEOUT, RETRIES,
-)
+def log_build_info() -> None:
+    """Маркер сборки.
+
+    Вызывать ТОЛЬКО после logging.basicConfig(): на импорте модуля обработчиков
+    ещё нет, и INFO-сообщение молча теряется.
+    """
+    logger.info(
+        "image_gen: модель=%s, таймаут=%s c, ретраи=%s, вариации промта включены",
+        MODEL, TIMEOUT, RETRIES,
+    )
 
 _last_combo: Tuple[str, ...] = ()
 
