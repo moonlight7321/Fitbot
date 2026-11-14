@@ -519,6 +519,22 @@ async def on_publish(callback: CallbackQuery) -> None:
     await callback.answer("Опубликовано ✅")
 
 
+@router.message()
+async def on_unknown(message: Message) -> None:
+    """Сообщение без команды раньше просто игнорировалось («is not handled»).
+
+    Отвечаем только в личке: в канале такой ответ был бы мусором в ленте.
+    """
+    if message.chat.type != "private" or message.from_user is None or message.from_user.is_bot:
+        return
+    await message.answer(
+        "Я работаю по командам:\n"
+        "/post — пост на очередную тему из ротации\n"
+        "/topic &lt;тема&gt; — пост на свою тему, например: /topic сон и восстановление\n"
+        "/help — справка"
+    )
+
+
 @router.errors()
 async def on_error(event: ErrorEvent) -> bool:
     """Глобальный перехват: логируем и не даём боту упасть."""
