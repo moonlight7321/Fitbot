@@ -21,6 +21,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -32,6 +33,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     BotCommand,
     BufferedInputFile,
+    FSInputFile,
     CallbackQuery,
     ErrorEvent,
     InlineKeyboardButton,
@@ -45,6 +47,7 @@ from ai_client import AIError, DeepSeekClient, check_length, clean_post, parse_s
 from config import Settings, load_settings
 from image_gen import fetch_image, log_build_info
 from scheduler import create_scheduler, describe_schedule
+import orders
 import subscriptions as subs
 
 logger = logging.getLogger(__name__)
@@ -643,6 +646,19 @@ def _sub_screen(status: "subs.Status") -> tuple:
                 callback_data="sub:trial",
             )
         ])
+    # Ручная оплата переводом: доступна, если заданы реквизиты или QR
+    if orders.PAYMENT_MODE == "card" and orders.CARD_NUMBER:
+        manual = True
+    else:
+        manual = bool(orders.PAYMENT_LINK or orders.PAYMENT_QR_PATH.exists())
+    if manual:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"Оформить на {subs.SUBSCRIPTION_DAYS} дней · {orders.PRICE_RUB:.0f} ₽",
+                callback_data="order:new",
+            )
+        ])
+
     if subs.SALES_ENABLED:
         rows.append([
             InlineKeyboardButton(
@@ -744,6 +760,182 @@ async def on_successful_payment(message: Message) -> None:
         "Оплата: user=%s, %s ⭐, charge=%s, доступ до %s",
         message.from_user.id, payment.total_amount, payment.telegram_payment_charge_id, until,
     )
+
+
+# ---------------------------------------------------------------------------
+# Заявки на оплату переводом (QR СБП или карта)
+# ---------------------------------------------------------------------------
+def _order_text(order: "orders.Order") -> str:
+    tz = ZoneInfo(ctx.settings.timezone)
+    until = order.expires_at.astimezone(tz).strftime("%H:%M")
+    lines = [
+        f"<b>Заказ #{order.short}</b>",
+        "",
+        f"Сумма: <b>{order.amount_str} ₽</b> (переведите ровно столько)",
+        f"Заявка действует до {until} по МСК, потом её нужно оформлять заново.",
+        "",
+    ]
+    if orders.PAYMENT_MODE == "card" and orders.CARD_NUMBER:
+        lines += [
+            "Перевод на карту:",
+            f"<code>{html.escape(orders.CARD_NUMBER)}</code>",
+            f"Получатель: {html.escape(orders.CARD_HOLDER or '—')}",
+        ]
+        if orders.PAYMENT_LINK:
+            lines += ["", f"Либо по ссылке: {html.escape(orders.PAYMENT_LINK)}"]
+    else:
+        lines.append("Оплата по СБП: отсканируйте QR ниже или откройте ссылку.")
+        if orders.PAYMENT_LINK:
+            lines.append(html.escape(orders.PAYMENT_LINK))
+    lines += ["", "Копейки в сумме — это номер заказа, по ним я найду ваш перевод."]
+    return "\n".join(lines)
+
+
+def _order_keyboard(order: "orders.Order") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"order:paid:{order.id}")
+        ]]
+    )
+
+
+async def _notify_owner(order: "orders.Order", user) -> None:
+    """Отправляет владельцу заявку на подтверждение."""
+    owners = ctx.settings.owner_ids
+    if not owners:
+        logger.warning("OWNER_ID не задан — заявку #%s некому подтверждать", order.short)
+        return
+
+    who = f"@{user.username}" if user.username else user.full_name
+    text = (
+        f"💰 <b>Заявка #{order.short}</b>\n"
+        f"Сумма: <b>{order.amount_str} ₽</b>\n"
+        f"Пользователь: {html.escape(who)} (id {order.user_id})\n"
+        f"Срок: {order.days} дн.\n\n"
+        "Проверьте перевод в выписке и подтвердите."
+    )
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"order:ok:{order.id}"),
+            InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"order:no:{order.id}"),
+        ]]
+    )
+    for owner_id in owners:
+        try:
+            await ctx.bot.send_message(owner_id, text, reply_markup=markup)
+        except Exception:  # noqa: BLE001
+            logger.exception("Не удалось отправить заявку владельцу %s", owner_id)
+
+
+@pay_router.callback_query(F.data == "order:new")
+async def cb_order_new(callback: CallbackQuery) -> None:
+    try:
+        order = await orders.create_order(callback.from_user.id, subs.SUBSCRIPTION_DAYS)
+    except orders.OrderExists as exc:
+        order = exc.order
+        await callback.answer("У вас уже есть активная заявка", show_alert=True)
+    except Exception:  # noqa: BLE001
+        logger.exception("Не удалось создать заявку")
+        await callback.answer("Не получилось создать заявку, попробуйте позже", show_alert=True)
+        return
+
+    chat_id = callback.message.chat.id if callback.message else callback.from_user.id
+    text = _order_text(order)
+    try:
+        if orders.PAYMENT_MODE != "card" and orders.PAYMENT_QR_PATH.exists():
+            await callback.bot.send_photo(
+                chat_id,
+                FSInputFile(orders.PAYMENT_QR_PATH),
+                caption=text,
+                reply_markup=_order_keyboard(order),
+            )
+        else:
+            await callback.bot.send_message(chat_id, text, reply_markup=_order_keyboard(order))
+    except Exception:  # noqa: BLE001
+        logger.exception("Не удалось отправить реквизиты")
+        await callback.answer("Не получилось отправить реквизиты", show_alert=True)
+        return
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("order:paid:"))
+async def cb_order_paid(callback: CallbackQuery) -> None:
+    try:
+        order_id = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректная заявка", show_alert=True)
+        return
+
+    try:
+        order = await orders.mark_paid(order_id, callback.from_user.id)
+    except orders.OrderExpired:
+        await callback.answer("Заявка истекла. Оформите новую: /sub", show_alert=True)
+        return
+    except orders.OrderNotFound:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+
+    if order.status == orders.STATUS_PAID:
+        await callback.answer("Эта заявка уже подтверждена", show_alert=True)
+        return
+
+    await callback.answer("Передал на проверку, доступ открою после подтверждения")
+    await _notify_owner(order, callback.from_user)
+
+
+@router.callback_query(F.data.startswith("order:ok:"))
+async def cb_order_approve(callback: CallbackQuery) -> None:
+    order_id = int((callback.data or "").split(":")[2])
+    try:
+        order = await orders.review(order_id, callback.from_user.id, approve=True)
+    except (orders.OrderNotFound, orders.OrderExpired) as exc:
+        await callback.answer(f"Нельзя подтвердить: {exc}", show_alert=True)
+        return
+
+    status = await subs.add_paid_days(
+        order.user_id, order.days, charge_id=f"order:{order.id}", amount=int(round(order.amount))
+    )
+    until = status.paid_until.strftime("%d.%m.%Y") if status.paid_until else "—"
+
+    try:
+        await callback.bot.send_message(
+            order.user_id, f"Оплата подтверждена ✅ Доступ активен до {until}."
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Не смог уведомить пользователя %s", order.user_id)
+
+    if callback.message:
+        try:
+            await callback.message.edit_text(f"Заявка #{order.short} подтверждена, доступ до {until}.")
+        except Exception:  # noqa: BLE001
+            logger.debug("Не удалось обновить сообщение заявки")
+    await callback.answer("Подтверждено")
+
+
+@router.callback_query(F.data.startswith("order:no:"))
+async def cb_order_reject(callback: CallbackQuery) -> None:
+    order_id = int((callback.data or "").split(":")[2])
+    try:
+        order = await orders.review(order_id, callback.from_user.id, approve=False)
+    except (orders.OrderNotFound, orders.OrderExpired) as exc:
+        await callback.answer(f"Нельзя отклонить: {exc}", show_alert=True)
+        return
+
+    try:
+        await callback.bot.send_message(
+            order.user_id,
+            f"Заявка #{order.short} отклонена: платёж не найден.\n"
+            "Если вы точно переводили — напишите в поддержку.",
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Не смог уведомить пользователя %s", order.user_id)
+
+    if callback.message:
+        try:
+            await callback.message.edit_text(f"Заявка #{order.short} отклонена.")
+        except Exception:  # noqa: BLE001
+            logger.debug("Не удалось обновить сообщение заявки")
+    await callback.answer("Отклонено")
 
 
 # ---------------------------------------------------------------------------
