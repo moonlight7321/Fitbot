@@ -771,8 +771,11 @@ async def _send_exercise(callback: CallbackQuery, ex: "exercises.Exercise") -> N
         return
 
     sent = None
+    cached_ids: Dict[int, str] = {}
     for attempt in (1, 2):
         cached = await exercises.cached_file_ids(ex.slug) if attempt == 1 else {}
+        if attempt == 1:
+            cached_ids = cached
         media = []
         for idx, path in enumerate(images):
             source = cached.get(idx) or FSInputFile(path)
@@ -800,7 +803,9 @@ async def _send_exercise(callback: CallbackQuery, ex: "exercises.Exercise") -> N
     for idx, message in enumerate(sent):
         if getattr(message, "photo", None):
             ids[idx] = message.photo[-1].file_id
-    await exercises.remember_file_ids(ex.slug, ids)
+    # Пишем в БД только если идентификаторы действительно новые
+    if ids and ids != cached_ids:
+        await exercises.remember_file_ids(ex.slug, ids)
     await callback.answer()
 
 
