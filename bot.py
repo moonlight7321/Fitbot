@@ -32,6 +32,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     BotCommand,
+    BotCommandScopeChat,
     BufferedInputFile,
     FSInputFile,
     CallbackQuery,
@@ -499,16 +500,63 @@ NO_PUBLISH_HINT = (
     "Добавьте CHANNEL_ID в .env.</i>"
 )
 
+PUBLIC_START_TEXT = (
+    "<b>Привет! Это сервис тренировок и питания.</b>\n\n"
+    "Здесь будут планы тренировок под ваши параметры и цель, расчёт калорий "
+    "и техника упражнений.\n\n"
+    "• /sub — подписка и бесплатный пробный период\n"
+    "• /help — справка\n\n"
+    "Первую неделю можно попробовать бесплатно."
+)
 
-@router.message(Command("start"))
+PUBLIC_HELP_TEXT = (
+    "<b>Справка</b>\n\n"
+    "/sub — подписка: пробный период, оплата, статус доступа\n"
+    "/help — эта справка\n\n"
+    "Доступ открывается на 30 дней после оплаты. "
+    "Вопросы по платежам — /paysupport."
+)
+
+
+def _is_owner(user_id: int) -> bool:
+    return user_id in ctx.settings.owner_ids
+
+
+@pay_router.message(Command("start"))
 async def cmd_start(message: Message) -> None:
-    await message.answer(START_TEXT)
+    """Публичное приветствие; владельцу показываем админскую памятку."""
+    if message.from_user and _is_owner(message.from_user.id):
+        await message.answer(START_TEXT)
+        return
+    await message.answer(
+        PUBLIC_START_TEXT,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text="Оформить подписку", callback_data="sub:menu")
+            ]]
+        ),
+    )
 
 
-@router.message(Command("help"))
+@pay_router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    text = HELP_TEXT if ctx.settings.channel_id else HELP_TEXT + NO_PUBLISH_HINT
+    if message.from_user and _is_owner(message.from_user.id):
+        text = HELP_TEXT if ctx.settings.channel_id else HELP_TEXT + NO_PUBLISH_HINT
+    else:
+        text = PUBLIC_HELP_TEXT
     await message.answer(text)
+
+
+@pay_router.callback_query(F.data == "sub:menu")
+async def cb_sub_menu(callback: CallbackQuery) -> None:
+    status = await subs.get_status(callback.from_user.id)
+    text, markup = _sub_screen(status)
+    if callback.message:
+        try:
+            await callback.message.answer(text, reply_markup=markup)
+        except Exception:  # noqa: BLE001
+            logger.debug("Не удалось показать экран подписки")
+    await callback.answer()
 
 
 @router.message(Command("post"))
@@ -600,7 +648,7 @@ async def on_publish(callback: CallbackQuery) -> None:
     await callback.answer("Опубликовано ✅")
 
 
-@router.message(F.text, ~F.text.startswith("/"))
+@pay_router.message(F.text, ~F.text.startswith("/"))
 async def on_unknown(message: Message) -> None:
     """Сообщение без команды раньше просто игнорировалось («is not handled»).
 
@@ -608,12 +656,22 @@ async def on_unknown(message: Message) -> None:
     """
     if message.chat.type != "private" or message.from_user is None or message.from_user.is_bot:
         return
-    await message.answer(
-        "Я работаю по командам:\n"
-        "/post — пост на очередную тему из ротации\n"
-        "/topic &lt;тема&gt; — пост на свою тему, например: /topic сон и восстановление\n"
-        "/help — справка"
-    )
+    if message.from_user and _is_owner(message.from_user.id):
+        hint = (
+            "Команды:\n"
+            "/post — пост на очередную тему\n"
+            "/topic &lt;тема&gt; — пост на свою тему\n"
+            "/sub — подписка и оплата\n"
+            "/backup — бэкап базы\n"
+            "/help — справка"
+        )
+    else:
+        hint = (
+            "Я работаю по командам:\n"
+            "/sub — подписка и бесплатный пробный период\n"
+            "/help — справка"
+        )
+    await message.answer(hint)
 
 
 @router.errors()
@@ -1024,15 +1082,26 @@ async def on_db_restore(message: Message) -> None:
 # Запуск
 # ---------------------------------------------------------------------------
 async def _set_commands(bot: Bot) -> None:
+    """Публичное меню — всем; админские команды — только владельцу."""
+    public = [
+        BotCommand(command="start", description="Начать"),
+        BotCommand(command="sub", description="Подписка и пробный период"),
+        BotCommand(command="help", description="Справка"),
+    ]
+    admin = public + [
+        BotCommand(command="post", description="Пост на очередную тему"),
+        BotCommand(command="topic", description="Пост на заданную тему"),
+        BotCommand(command="backup", description="Бэкап базы"),
+    ]
     try:
-        await bot.set_my_commands(
-            [
-                BotCommand(command="post", description="Пост на очередную тему"),
-                BotCommand(command="topic", description="Пост на заданную тему"),
-                BotCommand(command="help", description="Справка"),
-                BotCommand(command="start", description="Приветствие"),
-            ]
-        )
+        await bot.set_my_commands(public)
+        for owner_id in ctx.settings.owner_ids:
+            try:
+                await bot.set_my_commands(
+                    admin, scope=BotCommandScopeChat(chat_id=owner_id)
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("Не удалось выставить команды владельцу %s", owner_id)
     except Exception:  # noqa: BLE001
         logger.warning("Не удалось обновить список команд бота")
 
