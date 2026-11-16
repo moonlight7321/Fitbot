@@ -2021,6 +2021,12 @@ async def main() -> None:
                 settings.channel_id, exc,
             )
 
+    logger.info(
+        "Мини-апп: порт=%s, URL=%s",
+        settings.webapp_port or "выключен (WEBAPP_PORT=0)",
+        settings.webapp_url or "не задан (WEBAPP_URL пуст)",
+    )
+
     qr = orders.qr_file()
     logger.info(
         "Оплата переводом: режим=%s, ссылка=%s, QR=%s, цена=%s руб, TTL=%s мин",
