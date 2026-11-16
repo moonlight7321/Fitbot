@@ -124,6 +124,19 @@ def clean_post(text: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
+    # «Текст:» и «Призыв:» — служебные подписи модели, в канал они попадать не должны
+    cleaned = re.sub(r"(?m)^\s*текс?т\s*[:\-–—]\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"(?m)^\s*(?:призыв(?: к действию)?|call to action)\s*[:\-–—]\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Если модель подмешала в пост служебные блоки — отрезаем их
+    cleaned = re.split(r"(?mi)^\s*проверка\s*[:\-–—]", cleaned)[0].rstrip()
+    cleaned = re.sub(
+        r"(?m)^\s*хэштеги\s*[:\-–—]\s*", "", cleaned, flags=re.IGNORECASE
+    )
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()

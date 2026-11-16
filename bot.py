@@ -156,6 +156,15 @@ class OwnerOnlyMiddleware(BaseMiddleware):
             logger.warning("Доступ запрещён: апдейт без пользователя")
             return None
 
+        # В группах (в том числе в чате обсуждения канала) не отвечаем:
+        # иначе после каждого поста бот пишет «это приватный бот» при реплаях.
+        chat = getattr(event, "chat", None)
+        if chat is None and isinstance(event, CallbackQuery) and event.message is not None:
+            chat = event.message.chat
+        if chat is not None and chat.type != "private":
+            logger.info("Пропуск сообщения в чате %s (тип %s)", chat.id, chat.type)
+            return None
+
         logger.warning("Доступ запрещён: id=%s, %s", user.id, f"@{user.username}" if user.username else "без username")
 
         if not owners:
@@ -566,14 +575,15 @@ def _public_menu() -> ReplyKeyboardMarkup:
 
 
 def _owner_menu() -> ReplyKeyboardMarkup:
+    # Админские кнопки — в первых строках: Telegram обрезает длинные клавиатуры,
+    # и раньше «Пост»/«Бэкап» уезжали вниз, где их не видно.
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text=BTN_POST), KeyboardButton(text=BTN_TOPIC)],
+            [KeyboardButton(text=BTN_BACKUP), KeyboardButton(text=BTN_APP)],
             [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
             [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_CAL)],
-            [KeyboardButton(text=BTN_DIARY), KeyboardButton(text=BTN_APP)],
-            [KeyboardButton(text=BTN_HELP)],
-            [KeyboardButton(text=BTN_POST), KeyboardButton(text=BTN_TOPIC)],
-            [KeyboardButton(text=BTN_BACKUP)],
+            [KeyboardButton(text=BTN_DIARY), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
