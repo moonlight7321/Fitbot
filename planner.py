@@ -69,8 +69,40 @@ SPLITS = {
 
 EXERCISES_BY_MINUTES = {20: 4, 30: 5, 45: 6, 60: 7}
 
+# Что исключаем при ограничениях. Списки по slug — так проще проверять и
+# дополнять, чем угадывать по названию.
+EXCLUDE_BY_LIMIT = {
+    "knees": {
+        "Barbell_Squat", "Front_Barbell_Squat", "Hack_Squat", "Leg_Press",
+        "Dumbbell_Lunges", "Box_Squat", "Goblet_Squat", "Bodyweight_Squat",
+        "Rope_Jumping",
+    },
+    "back": {
+        "Barbell_Deadlift", "Romanian_Deadlift", "Rack_Pulls", "Good_Morning",
+        "Bent_Over_Barbell_Row", "T-Bar_Row_with_Handle", "Superman",
+    },
+    "shoulders": {
+        "Barbell_Shoulder_Press", "Dumbbell_Shoulder_Press", "Arnold_Dumbbell_Press",
+        "Front_Dumbbell_Raise", "Side_Lateral_Raise", "Upright_Barbell_Row",
+        "Dips_-_Triceps_Version", "Incline_Dumbbell_Press",
+    },
+    "wrists": {
+        "Pushups", "Plank", "Side_Bridge", "Mountain_Climbers", "Spider_Crawl",
+        "Barbell_Curl", "Preacher_Curl", "Close-Grip_Barbell_Bench_Press",
+    },
+}
 
-def _allowed(ex: "lib.Exercise", experience: str, equipment: str) -> bool:
+
+def excluded_slugs(limits: set) -> set:
+    result: set = set()
+    for code in limits:
+        result |= EXCLUDE_BY_LIMIT.get(code, set())
+    return result
+
+
+def _allowed(ex: "lib.Exercise", experience: str, equipment: str, excluded: set) -> bool:
+    if ex.slug in excluded:
+        return False
     if ex.level not in EXPERIENCE_LEVELS.get(experience, {"новичок"}):
         return False
     allowed_equipment = EQUIPMENT_ALLOWED.get(equipment)
@@ -96,9 +128,10 @@ def _pick(group: str, pool: Dict[str, List["lib.Exercise"]], offset: int, used: 
 
 
 def build(profile: "prof.Profile") -> Plan:
+    excluded = excluded_slugs(profile.limits)
     pool: Dict[str, List["lib.Exercise"]] = {}
     for ex in lib.all_exercises():
-        if _allowed(ex, profile.experience, profile.equipment):
+        if _allowed(ex, profile.experience, profile.equipment, excluded):
             pool.setdefault(ex.group, []).append(ex)
 
     if not pool:
@@ -132,6 +165,13 @@ def build(profile: "prof.Profile") -> Plan:
         "Если упражнение вызывает боль — не выполняйте его: замените на более простое "
         "или обратитесь к врачу/тренеру."
     )
+    if "heart" in profile.limits:
+        note += (
+            " ⚠️ При сердечно-сосудистых заболеваниях или повышенном давлении "
+            "нагрузку должен согласовать врач: этот план — общая информация, не назначение."
+        )
+    if excluded:
+        note += f" Упражнения с нагрузкой на проблемную зону исключены."
     if profile.goal == "mass":
         note += " Вес подбирайте так, чтобы последние 2 повтора давались тяжело, но без потери техники."
     elif profile.goal == "relief":
@@ -144,6 +184,7 @@ def render(profile: "prof.Profile", plan: Plan) -> str:
         "<b>Ваш план на неделю</b>",
         f"{profile.goal_title} · {profile.experience_title} · {profile.equipment_title}",
         f"{profile.days} тренировки(и) в неделю по {profile.minutes} минут",
+        f"Ограничения: {profile.limitations_title}",
         "",
     ]
     for index, day in enumerate(plan.days, 1):

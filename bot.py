@@ -1023,12 +1023,56 @@ async def pf_minutes(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+def _limits_keyboard(selected: set) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(
+            text=("✅ " if code in selected else "▫️ ") + title,
+            callback_data=f"pf:lim:{code}",
+        )]
+        for code, title in profiles.LIMITATIONS.items()
+    ]
+    rows.append([InlineKeyboardButton(text="Готово →", callback_data="pf:lim:done")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 @pay_router.callback_query(F.data.startswith("pf:eq:"))
 async def pf_equipment(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(equipment=(callback.data or "").split(":")[2])
-    await state.set_state(ProfileForm.height)
+    await state.update_data(equipment=(callback.data or "").split(":")[2], limits=[])
     if callback.message:
-        await callback.message.answer("Шаг 6 — ваш рост в сантиметрах? Например: 180")
+        await callback.message.edit_text(
+            "Шаг 6 — есть ли ограничения по здоровью?\n"
+            "Отметьте всё, что беспокоит, или сразу нажмите «Готово».",
+            reply_markup=_limits_keyboard(set()),
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("pf:lim:"))
+async def pf_limitations(callback: CallbackQuery, state: FSMContext) -> None:
+    action = (callback.data or "").split(":")[2]
+    data = await state.get_data()
+    limits = set(data.get("limits") or [])
+
+    if action == "done":
+        await state.update_data(limits=sorted(limits))
+        await state.set_state(ProfileForm.height)
+        if callback.message:
+            await callback.message.answer("Шаг 7 — ваш рост в сантиметрах? Например: 180")
+        await callback.answer()
+        return
+
+    if action in profiles.LIMITATIONS:
+        limits.symmetric_difference_update({action})
+        await state.update_data(limits=sorted(limits))
+        if callback.message:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=_limits_keyboard(limits))
+            except Exception:  # noqa: BLE001
+                logger.debug("Не удалось обновить клавиатуру ограничений")
+        chosen = ", ".join(profiles.LIMITATIONS[c] for c in sorted(limits)) or "ничего"
+        await callback.answer(f"Отмечено: {chosen}")
+        return
+
     await callback.answer()
 
 
@@ -1053,7 +1097,7 @@ async def pf_height(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(height=height)
     await state.set_state(ProfileForm.weight)
-    await message.answer("Шаг 7 — вес в килограммах? Например: 78")
+    await message.answer("Шаг 8 — вес в килограммах? Например: 78")
 
 
 @pay_router.message(StateFilter(ProfileForm.weight), F.text)
@@ -1081,6 +1125,7 @@ async def pf_weight(message: Message, state: FSMContext) -> None:
         minutes=int(data.get("minutes", 45)),
         goal=str(data.get("goal", "tone")),
         equipment=str(data.get("equipment", "gym")),
+        limitations=",".join(data.get("limits") or []),
     )
     await profiles.save(profile)
     await _show_plan(message, profile)
