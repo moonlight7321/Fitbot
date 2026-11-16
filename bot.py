@@ -1812,6 +1812,49 @@ async def _send_db_backup(bot: Bot, note: str = "") -> None:
             logger.exception("Не удалось отправить бэкап владельцу %s", owner_id)
 
 
+async def _send_subscription_reminders(bot: Bot) -> None:
+    """Напоминает за 3 дня до конца подписки или триала."""
+    try:
+        items = await subs.due_reminders(3)
+    except Exception:  # noqa: BLE001
+        logger.exception("Не удалось получить список напоминаний")
+        return
+
+    for item in items:
+        until = item["until"].strftime("%d.%m")
+        if item["kind"] == "paid":
+            text = (
+                f"Подписка заканчивается {until} — осталось {item['days_left']} дн.\n"
+                "Продлить можно заранее: дни добавятся к текущему сроку, ничего не сгорает."
+            )
+        else:
+            text = (
+                f"Пробный период заканчивается {until} — осталось {item['days_left']} дн.\n"
+                "Оформить подписку можно в любой момент."
+            )
+
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text="Открыть подписку", callback_data="sub:menu")
+            ]]
+        )
+        try:
+            await bot.send_message(item["user_id"], text, reply_markup=markup)
+        except Exception:  # noqa: BLE001 — пользователь мог заблокировать бота
+            logger.warning("Не смог отправить напоминание %s", item["user_id"])
+            continue
+
+        await subs.mark_reminder(item["user_id"], item["kind"], item["until_iso"])
+        logger.info("Напоминание отправлено: user=%s, %s", item["user_id"], item["kind"])
+
+
+async def _reminder_loop(bot: Bot) -> None:
+    await asyncio.sleep(60)  # даём боту подняться
+    while True:
+        await _send_subscription_reminders(bot)
+        await asyncio.sleep(6 * 60 * 60)
+
+
 async def _daily_backup(bot: Bot) -> None:
     while True:
         await asyncio.sleep(24 * 60 * 60)
@@ -2118,6 +2161,7 @@ async def main() -> None:
             logger.warning("AUTOPOST_ENABLED=true, но CHANNEL_ID не задан — автопостинг выключен")
 
     backup_task = asyncio.create_task(_daily_backup(bot))
+    reminder_task = asyncio.create_task(_reminder_loop(bot))
 
     if settings.webapp_port:
         try:
@@ -2133,6 +2177,7 @@ async def main() -> None:
         )
     finally:
         backup_task.cancel()
+        reminder_task.cancel()
         if scheduler is not None:
             scheduler.shutdown(wait=False)
         await bot.session.close()

@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     paid_until       TEXT,
     plan             TEXT,
     charge_id        TEXT,
+    reminded_paid_for  TEXT DEFAULT '',
+    reminded_trial_for TEXT DEFAULT '',
     updated_at       TEXT
 );
 CREATE TABLE IF NOT EXISTS payments (
@@ -92,6 +94,15 @@ def _open() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    # колонки появились позже: старые базы их не содержат
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(subscriptions)").fetchall()}
+    added = False
+    for column in ("reminded_paid_for", "reminded_trial_for"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE subscriptions ADD COLUMN {column} TEXT DEFAULT ''")
+            added = True
+    if added:
+        conn.commit()
     return conn
 
 
@@ -242,6 +253,60 @@ async def add_paid_days(user_id: int, days: int, charge_id: str, amount: int) ->
 
 async def revoke(user_id: int) -> Status:
     return await asyncio.to_thread(_revoke_sync, user_id)
+
+
+def _due_sync(within_days: int) -> list:
+    """Кому пора напомнить о скором окончании доступа."""
+    now = _now()
+    limit = now + timedelta(days=within_days)
+    conn = _open()
+    try:
+        rows = conn.execute("SELECT * FROM subscriptions").fetchall()
+    finally:
+        conn.close()
+
+    result = []
+    for row in rows:
+        keys = set(row.keys())
+        paid = _parse(row["paid_until"])
+        trial = _parse(row["trial_ends_at"])
+        reminded_paid = (row["reminded_paid_for"] if "reminded_paid_for" in keys else "") or ""
+        reminded_trial = (row["reminded_trial_for"] if "reminded_trial_for" in keys else "") or ""
+
+        if paid and now < paid <= limit and _fmt(paid) != reminded_paid:
+            result.append({
+                "user_id": row["user_id"], "kind": "paid", "until": paid,
+                "days_left": ceil((paid - now).total_seconds() / 86400),
+                "until_iso": _fmt(paid),
+            })
+        if trial and now < trial <= limit and _fmt(trial) != reminded_trial:
+            result.append({
+                "user_id": row["user_id"], "kind": "trial", "until": trial,
+                "days_left": ceil((trial - now).total_seconds() / 86400),
+                "until_iso": _fmt(trial),
+            })
+    return result
+
+
+def _mark_reminder_sync(user_id: int, kind: str, until_iso: str) -> None:
+    column = "reminded_paid_for" if kind == "paid" else "reminded_trial_for"
+    conn = _open()
+    try:
+        conn.execute(
+            f"UPDATE subscriptions SET {column} = ?, updated_at = ? WHERE user_id = ?",
+            (until_iso, _now().strftime("%Y-%m-%dT%H:%M:%S"), user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def due_reminders(within_days: int) -> list:
+    return await asyncio.to_thread(_due_sync, within_days)
+
+
+async def mark_reminder(user_id: int, kind: str, until_iso: str) -> None:
+    await asyncio.to_thread(_mark_reminder_sync, user_id, kind, until_iso)
 
 
 async def has_access(user_id: int) -> bool:
