@@ -112,6 +112,13 @@ def render(profile: "prof.Profile", result: Result) -> str:
         f"Углеводы: <b>{result.carbs_g} г</b>",
     ]
 
+    if "heart" in profile.limits:
+        lines.append("")
+        lines.append(
+            "<i>⚠️ При сердечно-сосудистых заболеваниях или повышенном давлении "
+            "калорийность и нагрузку согласуйте с врачом.</i>"
+        )
+
     if result.floor_applied:
         lines.append("")
         lines.append(

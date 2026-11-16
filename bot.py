@@ -1137,11 +1137,31 @@ async def pf_weight(message: Message, state: FSMContext) -> None:
 
     # пол и возраст могли уже быть заданы в калькуляторе — не теряем их
     existing = await profiles.get(message.from_user.id)
+    data["weight"] = weight
+    profile = _make_profile(message.from_user.id, data, existing)
+    await profiles.save(profile)
+    await _show_plan(message, profile)
 
-    profile = profiles.Profile(
-        user_id=message.from_user.id,
+
+# ---------------------------------------------------------------------------
+# Калории и БЖУ
+# ---------------------------------------------------------------------------
+AGE_OPTIONS = {
+    22: "18–25 лет",
+    30: "26–35 лет",
+    40: "36–45 лет",
+    50: "46–55 лет",
+    60: "56–65 лет",
+    70: "66+ лет",
+}
+
+
+def _make_profile(user_id: int, data: dict, existing=None) -> "profiles.Profile":
+    """Собирает профиль из ответов анкеты, сохраняя пол и возраст, если они были."""
+    return profiles.Profile(
+        user_id=user_id,
         height=int(data.get("height", 0)),
-        weight=weight,
+        weight=int(data.get("weight", 0)),
         experience=str(data.get("experience", "novice")),
         days=int(data.get("days", 3)),
         minutes=int(data.get("minutes", 45)),
@@ -1151,14 +1171,6 @@ async def pf_weight(message: Message, state: FSMContext) -> None:
         sex=existing.sex if existing else "",
         age=existing.age if existing else 0,
     )
-    await profiles.save(profile)
-    await _show_plan(message, profile)
-
-
-# ---------------------------------------------------------------------------
-# Калории и БЖУ
-# ---------------------------------------------------------------------------
-AGE_OPTIONS = {22: "18–25 лет", 30: "26–35 лет", 40: "36–45 лет", 50: "46–55 лет", 60: "56–65 лет"}
 
 
 async def _show_calories(message: Message, profile: "profiles.Profile") -> None:
