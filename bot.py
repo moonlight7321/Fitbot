@@ -33,6 +33,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     BotCommand,
     BotCommandScopeChat,
+    InputMediaPhoto,
     KeyboardButton,
     ReplyKeyboardMarkup,
     BufferedInputFile,
@@ -51,6 +52,7 @@ from config import Settings, load_settings
 from image_gen import fetch_image, log_build_info
 from scheduler import create_scheduler, describe_schedule
 import backup
+import exercises
 import orders
 import subscriptions as subs
 
@@ -528,17 +530,21 @@ def _is_owner(user_id: int) -> bool:
 # Кнопки меню
 # ---------------------------------------------------------------------------
 BTN_SUB = "💳 Подписка"
+BTN_EX = "🏋️ Упражнения"
 BTN_HELP = "ℹ️ Помощь"
 BTN_POST = "📝 Новый пост"
 BTN_TOPIC = "✍️ Пост на тему"
 BTN_BACKUP = "💾 Бэкап"
 
-MENU_TEXTS = {BTN_SUB, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
+MENU_TEXTS = {BTN_SUB, BTN_EX, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
 
 
 def _public_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_HELP)]],
+        keyboard=[
+            [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
+            [KeyboardButton(text=BTN_HELP)],
+        ],
         resize_keyboard=True,
         is_persistent=True,
     )
@@ -547,7 +553,8 @@ def _public_menu() -> ReplyKeyboardMarkup:
 def _owner_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
+            [KeyboardButton(text=BTN_HELP)],
             [KeyboardButton(text=BTN_POST), KeyboardButton(text=BTN_TOPIC)],
             [KeyboardButton(text=BTN_BACKUP)],
         ],
@@ -706,6 +713,124 @@ async def btn_sub(message: Message) -> None:
 @pay_router.message(F.text == BTN_HELP)
 async def btn_help(message: Message) -> None:
     await cmd_help(message)
+
+
+# ---------------------------------------------------------------------------
+# Каталог упражнений
+# ---------------------------------------------------------------------------
+def _groups_keyboard() -> InlineKeyboardMarkup:
+    rows, row = [], []
+    for group in exercises.groups():
+        row.append(InlineKeyboardButton(text=group, callback_data=f"ex:grp:{group}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _group_keyboard(group: str) -> InlineKeyboardMarkup:
+    rows = []
+    for ex in exercises.by_group(group):
+        mark = "" if ex.free else " 🔒"
+        rows.append([
+            InlineKeyboardButton(text=f"{ex.name_ru}{mark}", callback_data=f"ex:show:{ex.slug}")
+        ])
+    rows.append([InlineKeyboardButton(text="← Группы", callback_data="ex:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _send_exercise(callback: CallbackQuery, ex: "exercises.Exercise") -> None:
+    images = ex.images()
+    if not images:
+        await callback.message.answer(ex.card_text())
+        await callback.answer()
+        return
+
+    cached = await exercises.cached_file_ids(ex.slug)
+    media = []
+    for idx, path in enumerate(images):
+        source = cached.get(idx) or FSInputFile(path)
+        media.append(
+            InputMediaPhoto(media=source, caption=ex.card_text() if idx == 0 else None)
+        )
+
+    try:
+        sent = await callback.message.answer_media_group(media)
+    except Exception:  # noqa: BLE001
+        logger.exception("Не удалось отправить карточку %s", ex.slug)
+        await callback.answer("Не получилось отправить карточку", show_alert=True)
+        return
+
+    ids = {}
+    for idx, message in enumerate(sent):
+        if getattr(message, "photo", None):
+            ids[idx] = message.photo[-1].file_id
+    await exercises.remember_file_ids(ex.slug, ids)
+    await callback.answer()
+
+
+@pay_router.message(F.text == BTN_EX)
+async def btn_exercises(message: Message) -> None:
+    total = len(exercises.all_exercises())
+    free = sum(1 for e in exercises.all_exercises() if e.free)
+    await message.answer(
+        f"<b>Упражнения</b>\n{total} карточек, {free} доступны бесплатно.\n"
+        "Выберите группу мышц:",
+        reply_markup=_groups_keyboard(),
+    )
+
+
+@pay_router.callback_query(F.data == "ex:back")
+async def cb_ex_back(callback: CallbackQuery) -> None:
+    if callback.message:
+        await callback.message.edit_text(
+            "Выберите группу мышц:", reply_markup=_groups_keyboard()
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("ex:grp:"))
+async def cb_ex_group(callback: CallbackQuery) -> None:
+    group = (callback.data or "").split(":", 2)[2]
+    items = exercises.by_group(group)
+    if not items:
+        await callback.answer("В этой группе пока пусто", show_alert=True)
+        return
+    free = sum(1 for e in items if e.free)
+    if callback.message:
+        await callback.message.edit_text(
+            f"<b>{group}</b> — упражнений: {len(items)}, бесплатных: {free}.\n"
+            "Нажмите карточку:",
+            reply_markup=_group_keyboard(group),
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("ex:show:"))
+async def cb_ex_show(callback: CallbackQuery) -> None:
+    slug = (callback.data or "").split(":", 2)[2]
+    ex = exercises.by_slug(slug)
+    if ex is None:
+        await callback.answer("Упражнение не найдено", show_alert=True)
+        return
+
+    if not ex.free and not await subs.has_access(callback.from_user.id):
+        await callback.answer("Это упражнение по подписке", show_alert=True)
+        if callback.message:
+            await callback.message.answer(
+                "Эта карточка входит в подписку.\n"
+                f"Пробный период — {subs.TRIAL_DAYS} дней бесплатно.",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[[
+                        InlineKeyboardButton(text="Оформить подписку", callback_data="sub:menu")
+                    ]]
+                ),
+            )
+        return
+
+    await _send_exercise(callback, ex)
 
 
 @pay_router.message(F.text, ~F.text.startswith("/"), ~F.text.in_(MENU_TEXTS))
