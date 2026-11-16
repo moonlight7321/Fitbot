@@ -1606,13 +1606,21 @@ def _sub_screen(status: "subs.Status") -> tuple:
         manual = True
     else:
         manual = bool(orders.PAYMENT_LINK or orders.qr_file())
+    action = "Продлить" if status.active else "Оформить"
+
     if manual:
         rows.append([
             InlineKeyboardButton(
-                text=f"Оформить на {subs.SUBSCRIPTION_DAYS} дней · {orders.PRICE_RUB:.0f} ₽",
+                text=f"{action} на {subs.SUBSCRIPTION_DAYS} дней · {orders.PRICE_RUB:.0f} ₽",
                 callback_data="order:new",
             )
         ])
+        if status.active:
+            lines.extend([
+                "",
+                f"<i>Оплата заранее добавляет {subs.SUBSCRIPTION_DAYS} дней "
+                "к текущей дате окончания, ничего не сгорает.</i>",
+            ])
 
     if subs.SALES_ENABLED:
         rows.append([
@@ -1621,7 +1629,7 @@ def _sub_screen(status: "subs.Status") -> tuple:
                 callback_data="sub:pay",
             )
         ])
-    else:
+    elif not manual:
         lines.extend(["", "<i>Оплата откроется вместе с запуском платных функций.</i>"])
 
     markup = InlineKeyboardMarkup(inline_keyboard=rows) if rows else None

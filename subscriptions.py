@@ -176,7 +176,16 @@ def _add_paid_days_sync(user_id: int, days: int, charge_id: str, amount: int) ->
 
         row = _read(conn, user_id)
         current = _parse(row["paid_until"]) if row else None
-        base = current if current and current > now else now
+        trial_end = _parse(row["trial_ends_at"]) if row else None
+
+        # Оплата во время триала не должна «съедать» оставшиеся дни:
+        # считаем от самой поздней из дат (оплата, триал, сегодня).
+        candidates = [now]
+        if current and current > now:
+            candidates.append(current)
+        if trial_end and trial_end > now:
+            candidates.append(trial_end)
+        base = max(candidates)
         new_until = base + timedelta(days=days)
 
         conn.execute(
