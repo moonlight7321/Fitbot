@@ -36,17 +36,21 @@ from aiogram.types import (
     ErrorEvent,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    LabeledPrice,
     Message,
+    PreCheckoutQuery,
 )
 
 from ai_client import AIError, DeepSeekClient, check_length, clean_post, parse_sections
 from config import Settings, load_settings
 from image_gen import fetch_image, log_build_info
 from scheduler import create_scheduler, describe_schedule
+import subscriptions as subs
 
 logger = logging.getLogger(__name__)
 
-router = Router()
+router = Router()          # админские команды, закрыты OwnerOnlyMiddleware
+pay_router = Router()      # /sub и оплата — для всех пользователей
 
 CAPTION_LIMIT = 1024   # лимит подписи к фото в Telegram
 TEXT_LIMIT = 4000      # лимит текстового сообщения
@@ -616,6 +620,133 @@ async def on_error(event: ErrorEvent) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Подписка: триал и оплата Stars
+# ---------------------------------------------------------------------------
+def _sub_screen(status: "subs.Status") -> tuple:
+    """Текст и кнопки экрана подписки для текущего статуса."""
+    lines = ["<b>Подписка</b>", ""]
+
+    if status.kind == "paid":
+        lines.append(f"Доступ активен до {status.paid_until:%d.%m.%Y}, осталось {status.days_left} дн.")
+    elif status.kind == "trial":
+        lines.append(f"Пробный период до {status.trial_ends_at:%d.%m.%Y}, осталось {status.days_left} дн.")
+    elif status.kind == "expired":
+        lines.append("Срок доступа закончился. План и дневник сохранены, доступны только для чтения.")
+    else:
+        lines.append("Доступ не активирован.")
+
+    rows = []
+    if not status.trial_used and not status.active:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"Попробовать {subs.TRIAL_DAYS} дней бесплатно",
+                callback_data="sub:trial",
+            )
+        ])
+    if subs.SALES_ENABLED:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"Оплатить {subs.PRICE_STARS} ⭐ за {subs.SUBSCRIPTION_DAYS} дней",
+                callback_data="sub:pay",
+            )
+        ])
+    else:
+        lines.extend(["", "<i>Оплата откроется вместе с запуском платных функций.</i>"])
+
+    markup = InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+    return "\n".join(lines), markup
+
+
+@pay_router.message(Command("sub"))
+async def cmd_sub(message: Message) -> None:
+    status = await subs.get_status(message.from_user.id)
+    text, markup = _sub_screen(status)
+    await message.answer(text, reply_markup=markup)
+
+
+@pay_router.message(Command("paysupport"))
+async def cmd_paysupport(message: Message) -> None:
+    contact = os.getenv("SUPPORT_CONTACT", "").strip() or "владельцу бота"
+    await message.answer(f"Вопросы по оплате и возвратам: {contact}")
+
+
+@pay_router.callback_query(F.data == "sub:trial")
+async def cb_sub_trial(callback: CallbackQuery) -> None:
+    try:
+        status = await subs.start_trial(callback.from_user.id)
+        await callback.answer(f"Пробный период активирован на {subs.TRIAL_DAYS} дней")
+    except subs.TrialAlreadyUsed:
+        status = await subs.get_status(callback.from_user.id)
+        await callback.answer("Пробный период уже был использован", show_alert=True)
+
+    text, markup = _sub_screen(status)
+    if callback.message:
+        try:
+            await callback.message.edit_text(text, reply_markup=markup)
+        except Exception:  # noqa: BLE001 — сообщение могло устареть
+            logger.debug("Не удалось обновить экран подписки")
+
+
+@pay_router.callback_query(F.data == "sub:pay")
+async def cb_sub_pay(callback: CallbackQuery) -> None:
+    if not subs.SALES_ENABLED:
+        await callback.answer("Оплата ещё не включена", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id if callback.message else user_id
+    try:
+        await callback.bot.send_invoice(
+            chat_id=chat_id,
+            title=f"Доступ на {subs.SUBSCRIPTION_DAYS} дней",
+            description="Планы тренировок, питание и техника упражнений",
+            payload=f"sub:{user_id}:{subs.SUBSCRIPTION_DAYS}",
+            provider_token="",       # цифровые товары: только Stars
+            currency="XTR",
+            prices=[LabeledPrice(label=f"{subs.SUBSCRIPTION_DAYS} дней", amount=subs.PRICE_STARS)],
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Не удалось выставить счёт на подписку")
+        await callback.answer("Не получилось выставить счёт, попробуйте позже", show_alert=True)
+        return
+    await callback.answer()
+
+
+@pay_router.pre_checkout_query()
+async def on_pre_checkout(query: PreCheckoutQuery) -> None:
+    """Подтверждение обязательно: без него оплата зависает."""
+    await query.answer(ok=True)
+
+
+@pay_router.message(F.successful_payment)
+async def on_successful_payment(message: Message) -> None:
+    payment = message.successful_payment
+    days = subs.SUBSCRIPTION_DAYS
+
+    payload = payment.invoice_payload or ""
+    parts = payload.split(":")
+    if len(parts) == 3 and parts[0] == "sub":
+        try:
+            days = int(parts[2])
+        except ValueError:
+            logger.warning("Непонятный payload платежа: %r", payload)
+
+    status = await subs.add_paid_days(
+        user_id=message.from_user.id,
+        days=days,
+        charge_id=payment.telegram_payment_charge_id,
+        amount=payment.total_amount,
+    )
+
+    until = status.paid_until.strftime("%d.%m.%Y") if status.paid_until else "—"
+    await message.answer(f"Оплата прошла ✅ Доступ активен до {until}.")
+    logger.info(
+        "Оплата: user=%s, %s ⭐, charge=%s, доступ до %s",
+        message.from_user.id, payment.total_amount, payment.telegram_payment_charge_id, until,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Запуск
 # ---------------------------------------------------------------------------
 async def _set_commands(bot: Bot) -> None:
@@ -656,11 +787,13 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dispatcher = Dispatcher()
+    dispatcher.include_router(pay_router)   # оплата и /sub — всем
     dispatcher.include_router(router)
 
-    # Ограничение доступа: всё, что делает бот, доступно только владельцу
-    dispatcher.message.outer_middleware(OwnerOnlyMiddleware())
-    dispatcher.callback_query.outer_middleware(OwnerOnlyMiddleware())
+    # Ограничение доступа: админские команды только владельцу.
+    # Вешаем на роутер, а не на весь Dispatcher, иначе не пройдут платежи.
+    router.message.outer_middleware(OwnerOnlyMiddleware())
+    router.callback_query.outer_middleware(OwnerOnlyMiddleware())
 
     ctx.settings = settings
     ctx.ai = DeepSeekClient(settings)
