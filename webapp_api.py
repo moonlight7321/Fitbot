@@ -95,9 +95,11 @@ async def api_overview(request: web.Request) -> web.Response:
 
     profile = await profiles.get(user_id)
     status = await subs.get_status(user_id)
-    rows = await diary.items(user_id)
+    access = status.active
+    rows = await diary.items(user_id) if access else []
 
     payload = {
+        "access": access,
         "subscription": {
             "kind": status.kind,
             "active": status.active,
@@ -107,7 +109,7 @@ async def api_overview(request: web.Request) -> web.Response:
         "profile": None,
         "plan": None,
         "calories": None,
-        "diary": {"totals": diary.totals(rows), "items": rows[-20:]},
+        "diary": {"totals": diary.totals(rows), "items": rows[-20:]} if access else None,
     }
 
     if profile is not None:
@@ -122,21 +124,23 @@ async def api_overview(request: web.Request) -> web.Response:
             "activity": profile.activity_title,
             "limitations": profile.limitations_title,
         }
-        plan = planner.build(profile)
-        payload["plan"] = {
-            "note": plan.note,
-            "days": [
-                {
-                    "title": day.title,
-                    "slots": [
-                        {"slug": s.exercise.slug, "name": s.exercise.name_ru,
-                         "sets": s.sets, "reps": s.reps}
-                        for s in day.slots
-                    ],
-                }
-                for day in plan.days
-            ],
-        }
+        # План — платная функция
+        if access:
+            plan = planner.build(profile)
+            payload["plan"] = {
+                "note": plan.note,
+                "days": [
+                    {
+                        "title": day.title,
+                        "slots": [
+                            {"slug": s.exercise.slug, "name": s.exercise.name_ru,
+                             "sets": s.sets, "reps": s.reps}
+                            for s in day.slots
+                        ],
+                    }
+                    for day in plan.days
+                ],
+            }
         if profile.has_body_data and profile.activity:
             result = calories.compute(profile)
             payload["calories"] = {
@@ -192,6 +196,8 @@ async def api_exercise(request: web.Request) -> web.Response:
 async def api_diary_add(request: web.Request) -> web.Response:
     user_id = _user_id(request)
     assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
     data = await request.json()
     text = str(data.get("text", "")).strip()
     if not text:
@@ -230,6 +236,8 @@ async def api_diary_add(request: web.Request) -> web.Response:
 async def api_diary_clear(request: web.Request) -> web.Response:
     user_id = _user_id(request)
     assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
     await diary.clear(user_id)
     return web.json_response({"ok": True})
 

@@ -49,7 +49,16 @@ async function loadExercises() {
   render();
 }
 
+function paywallCard(title) {
+  return '<div class="card"><h2>' + title + '</h2>'
+    + '<p class="muted">Доступно по подписке. Пробный период — 7 дней бесплатно, '
+    + 'дальше 349 ₽ за 30 дней.</p>'
+    + '<p class="muted">Без подписки остаются калькулятор калорий и 17 базовых упражнений.</p>'
+    + '<p class="muted">Оформить можно в боте: /sub</p></div>';
+}
+
 function renderPlan(data) {
+  if (!data.access) return paywallCard("План");
   if (!data.profile) {
     return '<div class="card"><h2>План</h2><p class="muted">Анкета ещё не заполнена. Откройте бота и нажмите «📋 Мой план».</p></div>';
   }
@@ -82,6 +91,7 @@ function renderExercises() {
 }
 
 function renderDiary(data) {
+  if (!data.access || !data.diary) return paywallCard("Дневник");
   const totals = data.diary.totals;
   const target = data.calories ? data.calories.target : null;
   const items = data.diary.items || [];
@@ -136,7 +146,7 @@ function render() {
   else if (state.tab === "diary") view.innerHTML = renderDiary(data);
   else view.innerHTML = renderCalories(data);
 
-  if (state.tab === "diary") {
+  if (state.tab === "diary" && data.access && data.diary) {
     document.getElementById("add-meal").onclick = async () => {
       const input = document.getElementById("meal");
       const text = input.value.trim();

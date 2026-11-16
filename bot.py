@@ -540,6 +540,29 @@ PUBLIC_HELP_TEXT = (
 )
 
 
+PAYWALL_TEXT = (
+    "Это входит в подписку.\n\n"
+    "Пробный период — 7 дней бесплатно, дальше 349 ₽ за 30 дней.\n"
+    "Без подписки остаются калькулятор калорий и 17 базовых упражнений."
+)
+
+
+def _paywall_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="Попробовать / оформить", callback_data="sub:menu")
+        ]]
+    )
+
+
+async def _ensure_access(message: Message, user_id: int) -> bool:
+    """False и сообщение-заглушка, если подписки нет."""
+    if await subs.has_access(user_id):
+        return True
+    await message.answer(PAYWALL_TEXT, reply_markup=_paywall_markup())
+    return False
+
+
 def _is_owner(user_id: int) -> bool:
     return user_id in ctx.settings.owner_ids
 
@@ -984,6 +1007,11 @@ async def cmd_plan(message: Message, state: FSMContext) -> None:
     await state.clear()  # незавершённая анкета не должна мешать
     if message.from_user is None:
         return
+
+    # План — платная функция; анкета без подписки не запускается
+    if not await _ensure_access(message, message.from_user.id):
+        return
+
     profile = await profiles.get(message.from_user.id)
     if profile is None:
         await _start_profile(message, state)
@@ -1390,11 +1418,18 @@ async def cmd_diary(message: Message, state: FSMContext) -> None:
     await state.clear()
     if message.from_user is None:
         return
+    if not await _ensure_access(message, message.from_user.id):
+        return
     await _show_diary(message, message.from_user.id)
 
 
 @pay_router.callback_query(F.data == "dr:add")
 async def dr_add(callback: CallbackQuery, state: FSMContext) -> None:
+    if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Дневник доступен по подписке", show_alert=True)
+        return
     await state.set_state(DiaryForm.waiting)
     if callback.message:
         await callback.message.answer(
@@ -1407,6 +1442,9 @@ async def dr_add(callback: CallbackQuery, state: FSMContext) -> None:
 @pay_router.callback_query(F.data == "dr:undo")
 async def dr_undo(callback: CallbackQuery) -> None:
     if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Дневник доступен по подписке", show_alert=True)
         return
     removed = await diary.delete_last(callback.from_user.id)
     if callback.message:
@@ -1422,6 +1460,9 @@ async def dr_undo(callback: CallbackQuery) -> None:
 @pay_router.callback_query(F.data == "dr:clear")
 async def dr_clear(callback: CallbackQuery) -> None:
     if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Дневник доступен по подписке", show_alert=True)
         return
     removed = await diary.clear(callback.from_user.id)
     if callback.message:
@@ -1442,6 +1483,10 @@ async def diary_input(message: Message, state: FSMContext) -> None:
         await message.answer("Ввод отменён. Откройте дневник заново.")
         return
     if message.from_user is None:
+        return
+    if not await subs.has_access(message.from_user.id):
+        await state.clear()
+        await message.answer(PAYWALL_TEXT, reply_markup=_paywall_markup())
         return
 
     parsed, errors = [], []
