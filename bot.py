@@ -47,6 +47,7 @@ from ai_client import AIError, DeepSeekClient, check_length, clean_post, parse_s
 from config import Settings, load_settings
 from image_gen import fetch_image, log_build_info
 from scheduler import create_scheduler, describe_schedule
+import backup
 import orders
 import subscriptions as subs
 
@@ -599,7 +600,7 @@ async def on_publish(callback: CallbackQuery) -> None:
     await callback.answer("Опубликовано ✅")
 
 
-@router.message()
+@router.message(F.text, ~F.text.startswith("/"))
 async def on_unknown(message: Message) -> None:
     """Сообщение без команды раньше просто игнорировалось («is not handled»).
 
@@ -756,6 +757,7 @@ async def on_successful_payment(message: Message) -> None:
 
     until = status.paid_until.strftime("%d.%m.%Y") if status.paid_until else "—"
     await message.answer(f"Оплата прошла ✅ Доступ активен до {until}.")
+    await _send_db_backup(message.bot, "Бэкап после оплаты Stars")
     logger.info(
         "Оплата: user=%s, %s ⭐, charge=%s, доступ до %s",
         message.from_user.id, payment.total_amount, payment.telegram_payment_charge_id, until,
@@ -827,6 +829,31 @@ async def _notify_owner(order: "orders.Order", user, bot: Bot) -> None:
             await bot.send_message(owner_id, text, reply_markup=markup)
         except Exception:  # noqa: BLE001
             logger.exception("Не удалось отправить заявку владельцу %s", owner_id)
+
+
+async def _send_db_backup(bot: Bot, note: str = "") -> None:
+    """Отправляет копию базы владельцу. Сбой бэкапа не должен ломать сценарий."""
+    owners = ctx.settings.owner_ids
+    if not owners:
+        return
+    try:
+        path = await backup.make_backup()
+    except Exception:  # noqa: BLE001
+        logger.exception("Не удалось сделать бэкап базы")
+        return
+    if path is None:
+        return
+    for owner_id in owners:
+        try:
+            await bot.send_document(owner_id, FSInputFile(path), caption=note or "Бэкап базы")
+        except Exception:  # noqa: BLE001
+            logger.exception("Не удалось отправить бэкап владельцу %s", owner_id)
+
+
+async def _daily_backup(bot: Bot) -> None:
+    while True:
+        await asyncio.sleep(24 * 60 * 60)
+        await _send_db_backup(bot, "Ежедневный бэкап базы")
 
 
 @pay_router.callback_query(F.data == "order:new")
@@ -928,6 +955,8 @@ async def cb_order_approve(callback: CallbackQuery) -> None:
             await callback.message.edit_text(f"Заявка #{order.short} подтверждена, доступ до {until}.")
         except Exception:  # noqa: BLE001
             logger.debug("Не удалось обновить сообщение заявки")
+
+    await _send_db_backup(callback.bot, f"Бэкап после оплаты #{order.short}")
     await callback.answer("Подтверждено")
 
 
@@ -955,6 +984,40 @@ async def cb_order_reject(callback: CallbackQuery) -> None:
         except Exception:  # noqa: BLE001
             logger.debug("Не удалось обновить сообщение заявки")
     await callback.answer("Отклонено")
+
+
+# ---------------------------------------------------------------------------
+# Бэкап и восстановление базы
+# ---------------------------------------------------------------------------
+@router.message(Command("backup"))
+async def cmd_backup(message: Message) -> None:
+    """Ручной бэкап: присылает файл базы в этот чат."""
+    path = await backup.make_backup()
+    if path is None:
+        await message.answer("База не найдена — бэкапить нечего.")
+        return
+    await message.answer_document(FSInputFile(path), caption="Бэкап базы fitbot.db")
+
+
+@router.message(F.document)
+async def on_db_restore(message: Message) -> None:
+    """Восстановление базы: перешлите боту файл .db."""
+    document = message.document
+    if not (document.file_name or "").lower().endswith(".db"):
+        await message.answer("Нужен файл базы (.db).")
+        return
+
+    buffer = await message.bot.download(document)
+    try:
+        previous = await backup.restore(buffer.read())
+    except ValueError as exc:
+        await message.answer(f"Не восстановил: {exc}")
+        return
+
+    await message.answer(
+        f"База восстановлена ✅ Прежняя сохранена как <code>{previous.name}</code>.\n"
+        "Перезапустите бота, чтобы сбросить возможные кеши."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1012,6 +1075,18 @@ async def main() -> None:
 
     await _set_commands(bot)
 
+    # База пропала (новый контейнер) — предупреждаем владельца, но не падаем
+    if not backup.DB_PATH.exists() and settings.owner_ids:
+        for owner_id in settings.owner_ids:
+            try:
+                await bot.send_message(
+                    owner_id,
+                    "База данных не найдена. Если это не первый запуск — "
+                    "перешлите боту последний файл <code>.db</code>, он восстановит подписки.",
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("Не смог предупредить владельца %s о пустой базе", owner_id)
+
     # Проверяем канал сразу на старте: иначе «chat not found» всплывёт
     # только в момент автопоста, например в 07:00.
     if settings.channel_id:
@@ -1039,6 +1114,8 @@ async def main() -> None:
         else:
             logger.warning("AUTOPOST_ENABLED=true, но CHANNEL_ID не задан — автопостинг выключен")
 
+    backup_task = asyncio.create_task(_daily_backup(bot))
+
     try:
         logger.info("Бот запущен, жду команды")
         await dispatcher.start_polling(
@@ -1046,6 +1123,7 @@ async def main() -> None:
             allowed_updates=dispatcher.resolve_used_update_types(),
         )
     finally:
+        backup_task.cancel()
         if scheduler is not None:
             scheduler.shutdown(wait=False)
         await bot.session.close()

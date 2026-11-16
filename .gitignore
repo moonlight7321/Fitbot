@@ -3,6 +3,9 @@ drafts.json
 fitbot.db
 fitbot.db-journal
 payment_qr.png
+backups/
+*.restore.tmp
+*.before-restore.db
 drafts.json.tmp
 __pycache__/
 *.py[cod]
