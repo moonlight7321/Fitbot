@@ -1351,10 +1351,11 @@ async def _diary_text(user_id: int) -> str:
 
     lines.append("")
     if rows:
-        for index, row in enumerate(rows[-10:], 1):
-            lines.append(f"{index}. {row['name']} {row['grams']:.0f} г — {row['kcal']:.0f} ккал")
-        if len(rows) > 10:
-            lines.append(f"…и ещё {len(rows) - 10}")
+        start = max(0, len(rows) - 10)
+        if start:
+            lines.append(f"Показаны последние 10 из {len(rows)}:")
+        for number, row in enumerate(rows[start:], start=start + 1):
+            lines.append(f"{number}. {row['name']} {row['grams']:.0f} г — {row['kcal']:.0f} ккал")
     else:
         lines.append("Пока пусто. Нажмите «➕ Добавить».")
     return "\n".join(lines)
