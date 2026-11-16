@@ -1,0 +1,303 @@
+[
+  {
+    "name": "Куриная грудь",
+    "kcal": 165,
+    "protein": 31,
+    "fat": 3.6,
+    "carbs": 0
+  },
+  {
+    "name": "Куриное бедро",
+    "kcal": 209,
+    "protein": 26,
+    "fat": 10.9,
+    "carbs": 0
+  },
+  {
+    "name": "Индейка",
+    "kcal": 189,
+    "protein": 19,
+    "fat": 7,
+    "carbs": 0
+  },
+  {
+    "name": "Говядина",
+    "kcal": 250,
+    "protein": 26,
+    "fat": 15,
+    "carbs": 0
+  },
+  {
+    "name": "Свинина",
+    "kcal": 259,
+    "protein": 16,
+    "fat": 21,
+    "carbs": 0
+  },
+  {
+    "name": "Треска",
+    "kcal": 82,
+    "protein": 18,
+    "fat": 0.7,
+    "carbs": 0
+  },
+  {
+    "name": "Лосось",
+    "kcal": 208,
+    "protein": 20,
+    "fat": 13,
+    "carbs": 0
+  },
+  {
+    "name": "Яйцо куриное",
+    "kcal": 155,
+    "protein": 13,
+    "fat": 11,
+    "carbs": 1.1
+  },
+  {
+    "name": "Творог 5%",
+    "kcal": 121,
+    "protein": 17,
+    "fat": 5,
+    "carbs": 3
+  },
+  {
+    "name": "Творог 0%",
+    "kcal": 71,
+    "protein": 18,
+    "fat": 0.3,
+    "carbs": 1.8
+  },
+  {
+    "name": "Молоко 2.5%",
+    "kcal": 52,
+    "protein": 2.8,
+    "fat": 2.5,
+    "carbs": 4.7
+  },
+  {
+    "name": "Кефир 1%",
+    "kcal": 40,
+    "protein": 3,
+    "fat": 1,
+    "carbs": 4
+  },
+  {
+    "name": "Сыр твёрдый",
+    "kcal": 364,
+    "protein": 25,
+    "fat": 29,
+    "carbs": 2
+  },
+  {
+    "name": "Гречка варёная",
+    "kcal": 110,
+    "protein": 4,
+    "fat": 1,
+    "carbs": 21
+  },
+  {
+    "name": "Рис варёный",
+    "kcal": 116,
+    "protein": 2,
+    "fat": 0.9,
+    "carbs": 25
+  },
+  {
+    "name": "Овсянка на воде",
+    "kcal": 88,
+    "protein": 3,
+    "fat": 1.5,
+    "carbs": 15
+  },
+  {
+    "name": "Макароны варёные",
+    "kcal": 131,
+    "protein": 4,
+    "fat": 1,
+    "carbs": 25
+  },
+  {
+    "name": "Картофель варёный",
+    "kcal": 82,
+    "protein": 2,
+    "fat": 0.1,
+    "carbs": 17
+  },
+  {
+    "name": "Батат",
+    "kcal": 86,
+    "protein": 1.6,
+    "fat": 0.1,
+    "carbs": 20
+  },
+  {
+    "name": "Хлеб цельнозерновой",
+    "kcal": 247,
+    "protein": 9,
+    "fat": 3,
+    "carbs": 41
+  },
+  {
+    "name": "Банан",
+    "kcal": 96,
+    "protein": 1.5,
+    "fat": 0.2,
+    "carbs": 21
+  },
+  {
+    "name": "Яблоко",
+    "kcal": 52,
+    "protein": 0.3,
+    "fat": 0.2,
+    "carbs": 14
+  },
+  {
+    "name": "Апельсин",
+    "kcal": 47,
+    "protein": 0.9,
+    "fat": 0.1,
+    "carbs": 12
+  },
+  {
+    "name": "Ягоды",
+    "kcal": 40,
+    "protein": 0.7,
+    "fat": 0.3,
+    "carbs": 9
+  },
+  {
+    "name": "Огурец",
+    "kcal": 15,
+    "protein": 0.7,
+    "fat": 0.1,
+    "carbs": 3.6
+  },
+  {
+    "name": "Помидор",
+    "kcal": 20,
+    "protein": 1,
+    "fat": 0.2,
+    "carbs": 4
+  },
+  {
+    "name": "Брокколи",
+    "kcal": 34,
+    "protein": 2.8,
+    "fat": 0.4,
+    "carbs": 7
+  },
+  {
+    "name": "Салат листовой",
+    "kcal": 15,
+    "protein": 1.4,
+    "fat": 0.2,
+    "carbs": 2.9
+  },
+  {
+    "name": "Морковь",
+    "kcal": 41,
+    "protein": 0.9,
+    "fat": 0.2,
+    "carbs": 10
+  },
+  {
+    "name": "Авокадо",
+    "kcal": 160,
+    "protein": 2,
+    "fat": 15,
+    "carbs": 9
+  },
+  {
+    "name": "Миндаль",
+    "kcal": 579,
+    "protein": 21,
+    "fat": 50,
+    "carbs": 22
+  },
+  {
+    "name": "Оливковое масло",
+    "kcal": 884,
+    "protein": 0,
+    "fat": 100,
+    "carbs": 0
+  },
+  {
+    "name": "Сливочное масло",
+    "kcal": 717,
+    "protein": 0.9,
+    "fat": 81,
+    "carbs": 0.1
+  },
+  {
+    "name": "Протеин",
+    "kcal": 380,
+    "protein": 75,
+    "fat": 6,
+    "carbs": 10
+  },
+  {
+    "name": "Гранола",
+    "kcal": 471,
+    "protein": 10,
+    "fat": 20,
+    "carbs": 64
+  },
+  {
+    "name": "Шоколад",
+    "kcal": 546,
+    "protein": 5,
+    "fat": 31,
+    "carbs": 61
+  },
+  {
+    "name": "Кофе с молоком",
+    "kcal": 35,
+    "protein": 1,
+    "fat": 1.5,
+    "carbs": 4
+  },
+  {
+    "name": "Сок апельсиновый",
+    "kcal": 45,
+    "protein": 0.5,
+    "fat": 0.1,
+    "carbs": 10
+  },
+  {
+    "name": "Пицца",
+    "kcal": 266,
+    "protein": 11,
+    "fat": 10,
+    "carbs": 33
+  },
+  {
+    "name": "Бургер",
+    "kcal": 295,
+    "protein": 15,
+    "fat": 14,
+    "carbs": 30
+  },
+  {
+    "name": "Борщ",
+    "kcal": 60,
+    "protein": 2,
+    "fat": 3,
+    "carbs": 6
+  },
+  {
+    "name": "Плов",
+    "kcal": 180,
+    "protein": 6,
+    "fat": 6,
+    "carbs": 25
+  },
+  {
+    "name": "Сырники",
+    "kcal": 220,
+    "protein": 14,
+    "fat": 9,
+    "carbs": 20
+  }
+]

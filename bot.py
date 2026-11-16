@@ -55,6 +55,7 @@ from image_gen import fetch_image, log_build_info
 from scheduler import create_scheduler, describe_schedule
 import backup
 import calories
+import diary
 import exercises
 import orders
 import planner
@@ -538,12 +539,13 @@ BTN_SUB = "💳 Подписка"
 BTN_EX = "🏋️ Упражнения"
 BTN_PLAN = "📋 Мой план"
 BTN_CAL = "🧮 Калории"
+BTN_DIARY = "🍽 Дневник"
 BTN_HELP = "ℹ️ Помощь"
 BTN_POST = "📝 Новый пост"
 BTN_TOPIC = "✍️ Пост на тему"
 BTN_BACKUP = "💾 Бэкап"
 
-MENU_TEXTS = {BTN_SUB, BTN_EX, BTN_PLAN, BTN_CAL, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
+MENU_TEXTS = {BTN_SUB, BTN_EX, BTN_PLAN, BTN_CAL, BTN_DIARY, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
 
 
 def _public_menu() -> ReplyKeyboardMarkup:
@@ -551,7 +553,7 @@ def _public_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
             [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_CAL)],
-            [KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_DIARY), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -563,7 +565,7 @@ def _owner_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
             [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_CAL)],
-            [KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_DIARY), KeyboardButton(text=BTN_HELP)],
             [KeyboardButton(text=BTN_POST), KeyboardButton(text=BTN_TOPIC)],
             [KeyboardButton(text=BTN_BACKUP)],
         ],
@@ -1301,6 +1303,160 @@ async def cal_age(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+# ---------------------------------------------------------------------------
+# Дневник питания
+# ---------------------------------------------------------------------------
+class DiaryForm(StatesGroup):
+    waiting = State()
+
+
+MEAL_RE = re.compile(r"^(?P<name>.*?)[\s,]*?(?P<grams>\d{1,4})\s*(?:г|гр|грамм)?\.?$", re.IGNORECASE)
+
+
+def _diary_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить", callback_data="dr:add")],
+            [
+                InlineKeyboardButton(text="↩️ Удалить последнее", callback_data="dr:undo"),
+                InlineKeyboardButton(text="🧹 Очистить", callback_data="dr:clear"),
+            ],
+        ]
+    )
+
+
+async def _diary_text(user_id: int) -> str:
+    rows = await diary.items(user_id)
+    totals = diary.totals(rows)
+    profile = await profiles.get(user_id)
+
+    target = None
+    if profile is not None and profile.has_body_data and profile.activity:
+        target = calories.compute(profile).target
+
+    day = diary.today()
+    lines = [
+        f"<b>Дневник · {day[8:10]}.{day[5:7]}</b>",
+        f"Съедено: <b>{totals['kcal']:.0f}</b> ккал · Б {totals['protein']:.0f} · "
+        f"Ж {totals['fat']:.0f} · У {totals['carbs']:.0f}",
+    ]
+    if target:
+        left = target - totals["kcal"]
+        if left >= 0:
+            lines.append(f"Норма: {target} ккал · осталось {left:.0f}")
+        else:
+            lines.append(f"Норма: {target} ккал · перебор {abs(left):.0f}")
+    else:
+        lines.append("Норма не рассчитана: заполните анкету и откройте «🧮 Калории».")
+
+    lines.append("")
+    if rows:
+        for index, row in enumerate(rows[-10:], 1):
+            lines.append(f"{index}. {row['name']} {row['grams']:.0f} г — {row['kcal']:.0f} ккал")
+        if len(rows) > 10:
+            lines.append(f"…и ещё {len(rows) - 10}")
+    else:
+        lines.append("Пока пусто. Нажмите «➕ Добавить».")
+    return "\n".join(lines)
+
+
+async def _show_diary(message: Message, user_id: int) -> None:
+    await message.answer(await _diary_text(user_id), reply_markup=_diary_keyboard())
+
+
+@pay_router.message(F.text == BTN_DIARY)
+@pay_router.message(Command("diary"))
+async def cmd_diary(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    if message.from_user is None:
+        return
+    await _show_diary(message, message.from_user.id)
+
+
+@pay_router.callback_query(F.data == "dr:add")
+async def dr_add(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(DiaryForm.waiting)
+    if callback.message:
+        await callback.message.answer(
+            "Что съели? Напишите продукт и граммы, можно несколько через запятую:\n"
+            "<code>курица 150, рис 200, яблоко 120</code>"
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data == "dr:undo")
+async def dr_undo(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    removed = await diary.delete_last(callback.from_user.id)
+    if callback.message:
+        try:
+            await callback.message.edit_text(
+                await _diary_text(callback.from_user.id), reply_markup=_diary_keyboard()
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Не удалось обновить дневник")
+    await callback.answer("Удалил последнюю запись" if removed else "Записей нет")
+
+
+@pay_router.callback_query(F.data == "dr:clear")
+async def dr_clear(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    removed = await diary.clear(callback.from_user.id)
+    if callback.message:
+        try:
+            await callback.message.edit_text(
+                await _diary_text(callback.from_user.id), reply_markup=_diary_keyboard()
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Не удалось обновить дневник")
+    await callback.answer(f"Удалено записей: {removed}")
+
+
+@pay_router.message(StateFilter(DiaryForm.waiting), F.text)
+async def diary_input(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    if text.startswith("/") or text in MENU_TEXTS:
+        await state.clear()
+        await message.answer("Ввод отменён. Откройте дневник заново.")
+        return
+    if message.from_user is None:
+        return
+
+    parsed, errors = [], []
+    for chunk in re.split(r"[,;\n]", text):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        match = MEAL_RE.match(chunk)
+        if not match:
+            errors.append(f"«{chunk}» — не понял. Формат: курица 150")
+            continue
+        grams = int(match.group("grams"))
+        if not 5 <= grams <= 2000:
+            errors.append(f"«{chunk}» — граммы от 5 до 2000")
+            continue
+        food = diary.find_food(match.group("name"))
+        if food is None:
+            hints = diary.suggest(match.group("name"))
+            hint = f" Похожие: {', '.join(hints)}." if hints else ""
+            errors.append(f"«{match.group('name').strip()}» не нашёл.{hint}")
+            continue
+        parsed.append((food, grams))
+
+    if errors:
+        await message.answer(
+            "\n".join(errors) + "\n\nПопробуйте ещё раз, например: <code>курица 150, рис 200</code>"
+        )
+        return
+
+    for food, grams in parsed:
+        await diary.add(message.from_user.id, food, grams)
+    await state.clear()
+    await _show_diary(message, message.from_user.id)
+
+
 @pay_router.message(F.text, ~F.text.startswith("/"), ~F.text.in_(MENU_TEXTS))
 async def on_unknown(message: Message) -> None:
     """Сообщение без команды раньше просто игнорировалось («is not handled»).
@@ -1740,6 +1896,7 @@ async def _set_commands(bot: Bot) -> None:
         BotCommand(command="start", description="Начать"),
         BotCommand(command="plan", description="Мой план тренировок"),
         BotCommand(command="calories", description="Калории и БЖУ"),
+        BotCommand(command="diary", description="Дневник питания"),
         BotCommand(command="sub", description="Подписка и пробный период"),
         BotCommand(command="help", description="Справка"),
     ]
