@@ -712,12 +712,14 @@ async def on_publish(callback: CallbackQuery) -> None:
 
 
 @pay_router.message(F.text == BTN_SUB)
-async def btn_sub(message: Message) -> None:
+async def btn_sub(message: Message, state: FSMContext) -> None:
+    await state.clear()
     await cmd_sub(message)
 
 
 @pay_router.message(F.text == BTN_HELP)
-async def btn_help(message: Message) -> None:
+async def btn_help(message: Message, state: FSMContext) -> None:
+    await state.clear()
     await cmd_help(message)
 
 
@@ -815,7 +817,8 @@ async def _send_exercise(callback: CallbackQuery, ex: "exercises.Exercise") -> N
 
 
 @pay_router.message(F.text == BTN_EX)
-async def btn_exercises(message: Message) -> None:
+async def btn_exercises(message: Message, state: FSMContext) -> None:
+    await state.clear()
     total = len(exercises.all_exercises())
     if total == 0:
         await message.answer("Каталог упражнений пока пуст.")
@@ -938,6 +941,9 @@ async def _start_profile(message: Message, state: FSMContext) -> None:
 @pay_router.message(F.text == BTN_PLAN)
 @pay_router.message(Command("plan"))
 async def cmd_plan(message: Message, state: FSMContext) -> None:
+    await state.clear()  # незавершённая анкета не должна мешать
+    if message.from_user is None:
+        return
     profile = await profiles.get(message.from_user.id)
     if profile is None:
         await _start_profile(message, state)
@@ -981,7 +987,15 @@ async def pf_exp(callback: CallbackQuery, state: FSMContext) -> None:
 
 @pay_router.callback_query(F.data.startswith("pf:days:"))
 async def pf_days(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(days=int((callback.data or "").split(":")[2]))
+    try:
+        days = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный выбор", show_alert=True)
+        return
+    if days not in DAYS_OPTIONS:
+        await callback.answer("Некорректный выбор", show_alert=True)
+        return
+    await state.update_data(days=days)
     if callback.message:
         await callback.message.edit_text(
             "Шаг 4 — сколько минут на тренировку?",
@@ -992,7 +1006,15 @@ async def pf_days(callback: CallbackQuery, state: FSMContext) -> None:
 
 @pay_router.callback_query(F.data.startswith("pf:min:"))
 async def pf_minutes(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(minutes=int((callback.data or "").split(":")[2]))
+    try:
+        minutes = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный выбор", show_alert=True)
+        return
+    if minutes not in MINUTES_OPTIONS:
+        await callback.answer("Некорректный выбор", show_alert=True)
+        return
+    await state.update_data(minutes=minutes)
     if callback.message:
         await callback.message.edit_text(
             "Шаг 5 — что есть под рукой?",
@@ -1010,8 +1032,20 @@ async def pf_equipment(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+async def _abort_form(message: Message, state: FSMContext) -> bool:
+    """Если во время анкеты нажали кнопку меню или команду — сбрасываем её."""
+    text = (message.text or "").strip()
+    if text.startswith("/") or text in MENU_TEXTS:
+        await state.clear()
+        await message.answer("Анкета сброшена. Начните заново: «📋 Мой план».")
+        return True
+    return False
+
+
 @pay_router.message(StateFilter(ProfileForm.height), F.text)
 async def pf_height(message: Message, state: FSMContext) -> None:
+    if await _abort_form(message, state):
+        return
     digits = re.sub(r"\D", "", message.text or "")
     height = int(digits) if digits else 0
     if not 100 <= height <= 250:
@@ -1024,6 +1058,8 @@ async def pf_height(message: Message, state: FSMContext) -> None:
 
 @pay_router.message(StateFilter(ProfileForm.weight), F.text)
 async def pf_weight(message: Message, state: FSMContext) -> None:
+    if await _abort_form(message, state):
+        return
     digits = re.sub(r"\D", "", message.text or "")
     weight = int(digits) if digits else 0
     if not 30 <= weight <= 250:
@@ -1032,6 +1068,9 @@ async def pf_weight(message: Message, state: FSMContext) -> None:
 
     data = await state.get_data()
     await state.clear()
+
+    if message.from_user is None:
+        return
 
     profile = profiles.Profile(
         user_id=message.from_user.id,
@@ -1484,6 +1523,7 @@ async def _set_commands(bot: Bot) -> None:
     """Публичное меню — всем; админские команды — только владельцу."""
     public = [
         BotCommand(command="start", description="Начать"),
+        BotCommand(command="plan", description="Мой план тренировок"),
         BotCommand(command="sub", description="Подписка и пробный период"),
         BotCommand(command="help", description="Справка"),
     ]
