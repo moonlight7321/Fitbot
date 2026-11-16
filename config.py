@@ -167,6 +167,18 @@ def _parse_ids(raw: str) -> Tuple[int, ...]:
     return tuple(result)
 
 
+def _normalize_url(value: str) -> str:
+    """Приводит публичный адрес мини-аппа к виду https://host/."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if not raw.lower().startswith(("http://", "https://")):
+        raw = "https://" + raw
+    if raw.lower().startswith("http://"):
+        raw = "https://" + raw[7:]
+    return raw.rstrip("/") + "/"
+
+
 def _normalize_channel(value: str) -> str:
     """Приводит CHANNEL_ID к виду, который понимает Bot API.
 
@@ -257,8 +269,9 @@ def load_settings() -> Settings:
         post_interval_hours=_env_float("POST_INTERVAL_HOURS", 6.0, 0.25, 168.0),
         post_times=_parse_times(_env_str("POST_TIMES")),
         timezone=_env_str("TIMEZONE", "Europe/Moscow"),
+        webapp_url=_normalize_url(_env_str("WEBAPP_URL")) or None,
         # Публичный HTTPS-адрес мини-аппа (кнопка в Telegram) и локальный порт,
         # на котором поднимается aiohttp-сервер внутри процесса бота
-        webapp_url=_env_str("WEBAPP_URL") or None,
-        webapp_port=_env_int("WEBAPP_PORT", 0, 0, 65535),
+        # Порт мини-аппа: WEBAPP_PORT, иначе PORT (его выставляют PaaS-хостинги)
+        webapp_port=_env_int("WEBAPP_PORT", _env_int("PORT", 0, 0, 65535), 0, 65535),
     )
