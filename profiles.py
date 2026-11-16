@@ -27,10 +27,17 @@ CREATE TABLE IF NOT EXISTS profiles (
     limitations TEXT DEFAULT '',
     sex        TEXT DEFAULT '',
     age        INTEGER DEFAULT 0,
+    activity   TEXT DEFAULT '',
     updated_at TEXT NOT NULL
 );
 """
 
+ACTIVITY = {
+    "sedentary": "Сидячая работа, мало движения",
+    "light": "Иногда на ногах",
+    "active": "Весь день на ногах",
+    "heavy": "Тяжёлая физическая работа",
+}
 LIMITATIONS = {
     "knees": "Колени",
     "back": "Спина, поясница",
@@ -70,6 +77,11 @@ class Profile:
     limitations: str = ""
     sex: str = ""
     age: int = 0
+    activity: str = ""
+
+    @property
+    def activity_title(self) -> str:
+        return ACTIVITY.get(self.activity, "не указана")
 
     @property
     def has_body_data(self) -> bool:
@@ -114,6 +126,7 @@ def _open() -> sqlite3.Connection:
         "limitations": "ALTER TABLE profiles ADD COLUMN limitations TEXT DEFAULT ''",
         "sex": "ALTER TABLE profiles ADD COLUMN sex TEXT DEFAULT ''",
         "age": "ALTER TABLE profiles ADD COLUMN age INTEGER DEFAULT 0",
+        "activity": "ALTER TABLE profiles ADD COLUMN activity TEXT DEFAULT ''",
     }
     added = False
     for column, sql in migrations.items():
@@ -143,6 +156,7 @@ def _get_sync(user_id: int) -> Optional[Profile]:
         limitations=((row["limitations"] if "limitations" in keys else "") or ""),
         sex=((row["sex"] if "sex" in keys else "") or ""),
         age=int((row["age"] if "age" in keys else 0) or 0),
+        activity=((row["activity"] if "activity" in keys else "") or ""),
     )
 
 
@@ -152,19 +166,19 @@ def _save_sync(profile: Profile) -> None:
         conn.execute(
             """
             INSERT INTO profiles (user_id, height, weight, experience, days, minutes,
-                                  goal, equipment, limitations, sex, age, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  goal, equipment, limitations, sex, age, activity, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 height = excluded.height, weight = excluded.weight,
                 experience = excluded.experience, days = excluded.days,
                 minutes = excluded.minutes, goal = excluded.goal,
                 equipment = excluded.equipment, limitations = excluded.limitations,
-                sex = excluded.sex, age = excluded.age,
+                sex = excluded.sex, age = excluded.age, activity = excluded.activity,
                 updated_at = excluded.updated_at
             """,
             (profile.user_id, profile.height, profile.weight, profile.experience,
              profile.days, profile.minutes, profile.goal, profile.equipment,
-             profile.limitations, profile.sex, profile.age, _now()),
+             profile.limitations, profile.sex, profile.age, profile.activity, _now()),
         )
         conn.commit()
     finally:

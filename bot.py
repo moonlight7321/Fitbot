@@ -1036,7 +1036,22 @@ async def pf_minutes(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(minutes=minutes)
     if callback.message:
         await callback.message.edit_text(
-            "Шаг 5 — что есть под рукой?",
+            "Шаг 5 — сколько вы двигаетесь вне тренировок?",
+            reply_markup=_kb(profiles.ACTIVITY, "pf:act:"),
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("pf:act:"))
+async def pf_activity(callback: CallbackQuery, state: FSMContext) -> None:
+    code = (callback.data or "").split(":")[2]
+    if code not in profiles.ACTIVITY:
+        await callback.answer("Некорректный выбор", show_alert=True)
+        return
+    await state.update_data(activity=code)
+    if callback.message:
+        await callback.message.edit_text(
+            "Шаг 6 — что есть под рукой?",
             reply_markup=_kb(profiles.EQUIPMENT, "pf:eq:"),
         )
     await callback.answer()
@@ -1059,7 +1074,7 @@ async def pf_equipment(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(equipment=(callback.data or "").split(":")[2], limits=[])
     if callback.message:
         await callback.message.edit_text(
-            "Шаг 6 — есть ли ограничения по здоровью?\n"
+            "Шаг 7 — есть ли ограничения по здоровью?\n"
             "Отметьте всё, что беспокоит, или сразу нажмите «Готово».",
             reply_markup=_limits_keyboard(set()),
         )
@@ -1076,7 +1091,7 @@ async def pf_limitations(callback: CallbackQuery, state: FSMContext) -> None:
         await state.update_data(limits=sorted(limits))
         await state.set_state(ProfileForm.height)
         if callback.message:
-            await callback.message.answer("Шаг 7 — ваш рост в сантиметрах? Например: 180")
+            await callback.message.answer("Шаг 8 — ваш рост в сантиметрах? Например: 180")
         await callback.answer()
         return
 
@@ -1116,7 +1131,7 @@ async def pf_height(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(height=height)
     await state.set_state(ProfileForm.weight)
-    await message.answer("Шаг 8 — вес в килограммах? Например: 78")
+    await message.answer("Шаг 9 — вес в килограммах? Например: 78")
 
 
 @pay_router.message(StateFilter(ProfileForm.weight), F.text)
@@ -1168,6 +1183,7 @@ def _make_profile(user_id: int, data: dict, existing=None) -> "profiles.Profile"
         limitations=",".join(data.get("limits") or []),
         sex=existing.sex if existing else "",
         age=existing.age if existing else 0,
+        activity=str(data.get("activity", existing.activity if existing else "")),
     )
 
 
@@ -1200,7 +1216,33 @@ async def cmd_calories(message: Message, state: FSMContext) -> None:
             reply_markup=_kb({"m": "Мужской", "f": "Женский"}, "cal:sex:"),
         )
         return
+    if not profile.activity:
+        await message.answer(
+            "Сколько вы двигаетесь вне тренировок? Это заметно меняет расход калорий.",
+            reply_markup=_kb(profiles.ACTIVITY, "cal:act:"),
+        )
+        return
     await _show_calories(message, profile)
+
+
+@pay_router.callback_query(F.data.startswith("cal:act:"))
+async def cal_activity(callback: CallbackQuery, state: FSMContext) -> None:
+    code = (callback.data or "").split(":")[2]
+    if code not in profiles.ACTIVITY:
+        await callback.answer("Некорректный выбор", show_alert=True)
+        return
+    if callback.from_user is None:
+        return
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Анкета не найдена", show_alert=True)
+        return
+    profile = replace(profile, activity=code)
+    await profiles.save(profile)
+    await state.clear()
+    if callback.message:
+        await _show_calories(callback.message, profile)
+    await callback.answer()
 
 
 @pay_router.callback_query(F.data == "cal:edit")

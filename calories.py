@@ -19,6 +19,15 @@ ACTIVITY_BY_DAYS = {
     5: 1.65,
 }
 
+# Поправка к коэффициенту активности: тренировки в анкете не учитывают,
+# что человек может весь день стоять на ногах или, наоборот, сидеть.
+ACTIVITY_BONUS = {
+    "sedentary": -0.075,
+    "light": 0.0,
+    "active": 0.10,
+    "heavy": 0.20,
+}
+
 GOAL_ADJUST = {
     "mass": 0.10,     # профицит 10 %
     "relief": -0.15,  # дефицит 15 %
@@ -58,6 +67,8 @@ def compute(profile: "prof.Profile") -> Result:
     bmr = 10 * weight + 6.25 * height - 5 * age + (5 if sex == "m" else -161)
 
     factor = ACTIVITY_BY_DAYS.get(profile.days, 1.45)
+    factor += ACTIVITY_BONUS.get(profile.activity, 0.0)
+    factor = min(max(factor, 1.2), 1.95)  # разумные рамки
     tdee = bmr * factor
 
     adjust = GOAL_ADJUST.get(profile.goal, GOAL_ADJUST["tone"])
@@ -101,7 +112,7 @@ def render(profile: "prof.Profile", result: Result) -> str:
         "<b>Калории и БЖУ</b>",
         f"{profile.weight} кг · {profile.height} см · {profile.age} лет · "
         f"{'мужской' if profile.sex == 'm' else 'женский'}",
-        f"Активность: {profile.days} тренировки(и) в неделю",
+        f"Тренировки: {profile.days} в неделю · движение вне зала: {profile.activity_title}",
         "",
         f"Базовый обмен (BMR): <b>{result.bmr}</b> ккал",
         f"С учётом активности: <b>{result.tdee}</b> ккал",
