@@ -29,7 +29,9 @@ load_dotenv()
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import Command, CommandObject, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     BotCommand,
     BotCommandScopeChat,
@@ -54,6 +56,8 @@ from scheduler import create_scheduler, describe_schedule
 import backup
 import exercises
 import orders
+import planner
+import profiles
 import subscriptions as subs
 
 logger = logging.getLogger(__name__)
@@ -531,19 +535,20 @@ def _is_owner(user_id: int) -> bool:
 # ---------------------------------------------------------------------------
 BTN_SUB = "💳 Подписка"
 BTN_EX = "🏋️ Упражнения"
+BTN_PLAN = "📋 Мой план"
 BTN_HELP = "ℹ️ Помощь"
 BTN_POST = "📝 Новый пост"
 BTN_TOPIC = "✍️ Пост на тему"
 BTN_BACKUP = "💾 Бэкап"
 
-MENU_TEXTS = {BTN_SUB, BTN_EX, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
+MENU_TEXTS = {BTN_SUB, BTN_EX, BTN_PLAN, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
 
 
 def _public_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
-            [KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -554,7 +559,7 @@ def _owner_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
-            [KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_HELP)],
             [KeyboardButton(text=BTN_POST), KeyboardButton(text=BTN_TOPIC)],
             [KeyboardButton(text=BTN_BACKUP)],
         ],
@@ -885,6 +890,161 @@ async def cb_ex_show(callback: CallbackQuery) -> None:
         return
 
     await _send_exercise(callback, ex)
+
+
+# ---------------------------------------------------------------------------
+# Анкета и план тренировок
+# ---------------------------------------------------------------------------
+class ProfileForm(StatesGroup):
+    height = State()
+    weight = State()
+
+
+def _kb(options: dict, prefix: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"{prefix}{key}")]
+            for key, label in options.items()
+        ]
+    )
+
+
+DAYS_OPTIONS = {2: "2 дня в неделю", 3: "3 дня в неделю", 4: "4 дня в неделю", 5: "5 дней в неделю"}
+MINUTES_OPTIONS = {20: "20 минут", 30: "30 минут", 45: "45 минут", 60: "60 минут"}
+
+
+async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
+    plan = planner.build(profile)
+    if not plan.days:
+        await message.answer(plan.note)
+        return
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit"),
+            InlineKeyboardButton(text="🏋️ Упражнения", callback_data="ex:back"),
+        ]]
+    )
+    await message.answer(planner.render(profile, plan), reply_markup=markup)
+
+
+async def _start_profile(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "Соберу план под вас. Шаг 1 — цель:",
+        reply_markup=_kb(profiles.GOALS, "pf:goal:"),
+    )
+
+
+@pay_router.message(F.text == BTN_PLAN)
+@pay_router.message(Command("plan"))
+async def cmd_plan(message: Message, state: FSMContext) -> None:
+    profile = await profiles.get(message.from_user.id)
+    if profile is None:
+        await _start_profile(message, state)
+        return
+    await _show_plan(message, profile)
+
+
+@pay_router.callback_query(F.data == "pf:edit")
+async def pf_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if callback.message:
+        await callback.message.answer(
+            "Пересоберём план. Цель:",
+            reply_markup=_kb(profiles.GOALS, "pf:goal:"),
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("pf:goal:"))
+async def pf_goal(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.update_data(goal=(callback.data or "").split(":")[2])
+    if callback.message:
+        await callback.message.edit_text(
+            "Шаг 2 — опыт тренировок:",
+            reply_markup=_kb(profiles.EXPERIENCE, "pf:exp:"),
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("pf:exp:"))
+async def pf_exp(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(experience=(callback.data or "").split(":")[2])
+    if callback.message:
+        await callback.message.edit_text(
+            "Шаг 3 — сколько дней в неделю готовы тренироваться?",
+            reply_markup=_kb(DAYS_OPTIONS, "pf:days:"),
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("pf:days:"))
+async def pf_days(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(days=int((callback.data or "").split(":")[2]))
+    if callback.message:
+        await callback.message.edit_text(
+            "Шаг 4 — сколько минут на тренировку?",
+            reply_markup=_kb(MINUTES_OPTIONS, "pf:min:"),
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("pf:min:"))
+async def pf_minutes(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(minutes=int((callback.data or "").split(":")[2]))
+    if callback.message:
+        await callback.message.edit_text(
+            "Шаг 5 — что есть под рукой?",
+            reply_markup=_kb(profiles.EQUIPMENT, "pf:eq:"),
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("pf:eq:"))
+async def pf_equipment(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(equipment=(callback.data or "").split(":")[2])
+    await state.set_state(ProfileForm.height)
+    if callback.message:
+        await callback.message.answer("Шаг 6 — ваш рост в сантиметрах? Например: 180")
+    await callback.answer()
+
+
+@pay_router.message(StateFilter(ProfileForm.height), F.text)
+async def pf_height(message: Message, state: FSMContext) -> None:
+    digits = re.sub(r"\D", "", message.text or "")
+    height = int(digits) if digits else 0
+    if not 100 <= height <= 250:
+        await message.answer("Рост числом в сантиметрах, от 100 до 250. Например: 180")
+        return
+    await state.update_data(height=height)
+    await state.set_state(ProfileForm.weight)
+    await message.answer("Шаг 7 — вес в килограммах? Например: 78")
+
+
+@pay_router.message(StateFilter(ProfileForm.weight), F.text)
+async def pf_weight(message: Message, state: FSMContext) -> None:
+    digits = re.sub(r"\D", "", message.text or "")
+    weight = int(digits) if digits else 0
+    if not 30 <= weight <= 250:
+        await message.answer("Вес числом в килограммах, от 30 до 250. Например: 78")
+        return
+
+    data = await state.get_data()
+    await state.clear()
+
+    profile = profiles.Profile(
+        user_id=message.from_user.id,
+        height=int(data.get("height", 0)),
+        weight=weight,
+        experience=str(data.get("experience", "novice")),
+        days=int(data.get("days", 3)),
+        minutes=int(data.get("minutes", 45)),
+        goal=str(data.get("goal", "tone")),
+        equipment=str(data.get("equipment", "gym")),
+    )
+    await profiles.save(profile)
+    await _show_plan(message, profile)
 
 
 @pay_router.message(F.text, ~F.text.startswith("/"), ~F.text.in_(MENU_TEXTS))

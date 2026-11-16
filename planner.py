@@ -1,0 +1,153 @@
+"""Построение недельного плана из библиотеки упражнений.
+
+Правила детерминированные: одинаковые ответы анкеты дают одинаковый план.
+Модель здесь не участвует — она бы придумала несуществующие упражнения.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List
+
+import exercises as lib
+import profiles as prof
+
+
+@dataclass
+class Slot:
+    exercise: "lib.Exercise"
+    sets: int
+    reps: str
+    rest: int
+
+
+@dataclass
+class Day:
+    title: str
+    slots: List[Slot] = field(default_factory=list)
+
+
+@dataclass
+class Plan:
+    days: List[Day]
+    note: str
+
+
+EXPERIENCE_LEVELS = {
+    "novice": {"новичок"},
+    "middle": {"новичок", "средний"},
+    "advanced": {"новичок", "средний", "продвинутый"},
+}
+
+EQUIPMENT_ALLOWED = {
+    "gym": None,  # всё
+    "home": {"свой вес", "гантели", "гиря или гантель", "скакалка", "турник", "брусья"},
+    "body": {"свой вес", "турник", "брусья", "скакалка"},
+}
+
+GOAL_PARAMS = {
+    "mass": {"sets": 4, "reps": "6–10", "rest": 90},
+    "relief": {"sets": 3, "reps": "10–15", "rest": 60},
+    "tone": {"sets": 3, "reps": "12–15", "rest": 60},
+}
+
+SPLITS = {
+    2: [("Всё тело, день A", ["Ноги", "Грудь", "Спина", "Пресс"]),
+        ("Всё тело, день B", ["Ноги", "Спина", "Плечи", "Пресс"])],
+    3: [("Всё тело, день A", ["Ноги", "Грудь", "Спина", "Пресс"]),
+        ("Всё тело, день B", ["Ноги", "Спина", "Плечи", "Пресс"]),
+        ("Всё тело, день C", ["Ноги", "Грудь", "Руки", "Пресс"])],
+    4: [("Верх тела A", ["Грудь", "Спина", "Плечи", "Руки", "Пресс"]),
+        ("Низ тела A", ["Ноги", "Ноги", "Пресс"]),
+        ("Верх тела B", ["Спина", "Грудь", "Руки", "Плечи"]),
+        ("Низ тела B", ["Ноги", "Ноги", "Пресс"])],
+    5: [("Жимовой день", ["Грудь", "Плечи", "Руки", "Пресс"]),
+        ("Тяговый день", ["Спина", "Спина", "Руки", "Пресс"]),
+        ("Ноги", ["Ноги", "Ноги", "Пресс"]),
+        ("Верх тела", ["Грудь", "Спина", "Плечи"]),
+        ("Всё тело", ["Ноги", "Спина", "Грудь", "Пресс"])],
+}
+
+EXERCISES_BY_MINUTES = {20: 4, 30: 5, 45: 6, 60: 7}
+
+
+def _allowed(ex: "lib.Exercise", experience: str, equipment: str) -> bool:
+    if ex.level not in EXPERIENCE_LEVELS.get(experience, {"новичок"}):
+        return False
+    allowed_equipment = EQUIPMENT_ALLOWED.get(equipment)
+    if allowed_equipment is None:
+        return True
+    return ex.equipment in allowed_equipment
+
+
+def _pick(group: str, pool: Dict[str, List["lib.Exercise"]], offset: int, used: set) -> "lib.Exercise | None":
+    """Берёт упражнение группы, которого ещё не было в этом дне.
+
+    Если группа исчерпана — возвращает None: лучше сделать меньше упражнений,
+    чем два раза подряд одно и то же.
+    """
+    candidates = pool.get(group, [])
+    if not candidates:
+        return None
+    for step in range(len(candidates)):
+        ex = candidates[(offset + step) % len(candidates)]
+        if ex.slug not in used:
+            return ex
+    return None
+
+
+def build(profile: "prof.Profile") -> Plan:
+    pool: Dict[str, List["lib.Exercise"]] = {}
+    for ex in lib.all_exercises():
+        if _allowed(ex, profile.experience, profile.equipment):
+            pool.setdefault(ex.group, []).append(ex)
+
+    if not pool:
+        return Plan(days=[], note="Под выбранные условия упражнений не нашлось — попробуйте другой инвентарь или уровень.")
+
+    params = GOAL_PARAMS.get(profile.goal, GOAL_PARAMS["tone"])
+    per_day = EXERCISES_BY_MINUTES.get(profile.minutes, 5)
+    split = SPLITS.get(profile.days, SPLITS[3])
+
+    days: List[Day] = []
+    for day_index, (title, groups) in enumerate(split):
+        day = Day(title=title)
+        used: set = set()
+        attempts = 0
+        step = 0
+        while len(day.slots) < per_day and attempts < per_day * 5:
+            group = groups[step % len(groups)]
+            step += 1
+            attempts += 1
+            ex = _pick(group, pool, day_index + step, used)
+            if ex is None:
+                continue
+            used.add(ex.slug)
+            day.slots.append(
+                Slot(exercise=ex, sets=params["sets"], reps=params["reps"], rest=params["rest"])
+            )
+        days.append(day)
+
+    note = "Разминка 5–10 минут перед каждым днём, заминка — 3–5 минут."
+    if profile.goal == "mass":
+        note += " Вес подбирайте так, чтобы последние 2 повтора давались тяжело, но без потери техники."
+    elif profile.goal == "relief":
+        note += " Отдых короче, но техника важнее темпа."
+    return Plan(days=days, note=note)
+
+
+def render(profile: "prof.Profile", plan: Plan) -> str:
+    lines = [
+        "<b>Ваш план на неделю</b>",
+        f"{profile.goal_title} · {profile.experience_title} · {profile.equipment_title}",
+        f"{profile.days} тренировки(и) в неделю по {profile.minutes} минут",
+        "",
+    ]
+    for index, day in enumerate(plan.days, 1):
+        lines.append(f"<b>День {index} · {day.title}</b>")
+        if not day.slots:
+            lines.append("— упражнений не нашлось")
+        for n, slot in enumerate(day.slots, 1):
+            lines.append(f"{n}. {slot.exercise.name_ru} — {slot.sets}×{slot.reps}")
+        lines.append("")
+    lines.append(f"<i>{plan.note}</i>")
+    return "\n".join(lines)
