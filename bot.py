@@ -19,7 +19,7 @@ import logging
 import os
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Union
 from zoneinfo import ZoneInfo
 
@@ -54,6 +54,7 @@ from config import Settings, load_settings
 from image_gen import fetch_image, log_build_info
 from scheduler import create_scheduler, describe_schedule
 import backup
+import calories
 import exercises
 import orders
 import planner
@@ -536,19 +537,21 @@ def _is_owner(user_id: int) -> bool:
 BTN_SUB = "💳 Подписка"
 BTN_EX = "🏋️ Упражнения"
 BTN_PLAN = "📋 Мой план"
+BTN_CAL = "🧮 Калории"
 BTN_HELP = "ℹ️ Помощь"
 BTN_POST = "📝 Новый пост"
 BTN_TOPIC = "✍️ Пост на тему"
 BTN_BACKUP = "💾 Бэкап"
 
-MENU_TEXTS = {BTN_SUB, BTN_EX, BTN_PLAN, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
+MENU_TEXTS = {BTN_SUB, BTN_EX, BTN_PLAN, BTN_CAL, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
 
 
 def _public_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
-            [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_CAL)],
+            [KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -559,7 +562,8 @@ def _owner_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
-            [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_CAL)],
+            [KeyboardButton(text=BTN_HELP)],
             [KeyboardButton(text=BTN_POST), KeyboardButton(text=BTN_TOPIC)],
             [KeyboardButton(text=BTN_BACKUP)],
         ],
@@ -1131,6 +1135,9 @@ async def pf_weight(message: Message, state: FSMContext) -> None:
     if message.from_user is None:
         return
 
+    # пол и возраст могли уже быть заданы в калькуляторе — не теряем их
+    existing = await profiles.get(message.from_user.id)
+
     profile = profiles.Profile(
         user_id=message.from_user.id,
         height=int(data.get("height", 0)),
@@ -1141,9 +1148,89 @@ async def pf_weight(message: Message, state: FSMContext) -> None:
         goal=str(data.get("goal", "tone")),
         equipment=str(data.get("equipment", "gym")),
         limitations=",".join(data.get("limits") or []),
+        sex=existing.sex if existing else "",
+        age=existing.age if existing else 0,
     )
     await profiles.save(profile)
     await _show_plan(message, profile)
+
+
+# ---------------------------------------------------------------------------
+# Калории и БЖУ
+# ---------------------------------------------------------------------------
+AGE_OPTIONS = {22: "18–25 лет", 30: "26–35 лет", 40: "36–45 лет", 50: "46–55 лет", 60: "56–65 лет"}
+
+
+async def _show_calories(message: Message, profile: "profiles.Profile") -> None:
+    result = calories.compute(profile)
+    await message.answer(calories.render(profile, result))
+
+
+@pay_router.message(F.text == BTN_CAL)
+@pay_router.message(Command("calories"))
+async def cmd_calories(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    if message.from_user is None:
+        return
+    profile = await profiles.get(message.from_user.id)
+    if profile is None:
+        await message.answer(
+            "Сначала соберите анкету — «📋 Мой план». "
+            "Из неё берутся рост, вес, цель и активность."
+        )
+        return
+    if not profile.has_body_data:
+        await message.answer(
+            "Для расчёта нужны пол и возраст.\nШаг 1 — пол:",
+            reply_markup=_kb({"m": "Мужской", "f": "Женский"}, "cal:sex:"),
+        )
+        return
+    await _show_calories(message, profile)
+
+
+@pay_router.callback_query(F.data.startswith("cal:sex:"))
+async def cal_sex(callback: CallbackQuery, state: FSMContext) -> None:
+    sex = (callback.data or "").split(":")[2]
+    if sex not in ("m", "f"):
+        await callback.answer("Некорректный выбор", show_alert=True)
+        return
+    await state.update_data(cal_sex=sex)
+    if callback.message:
+        await callback.message.edit_text(
+            "Шаг 2 — возраст:", reply_markup=_kb(AGE_OPTIONS, "cal:age:")
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("cal:age:"))
+async def cal_age(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        age = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный выбор", show_alert=True)
+        return
+    if age not in AGE_OPTIONS:
+        await callback.answer("Некорректный выбор", show_alert=True)
+        return
+
+    data = await state.get_data()
+    sex = data.get("cal_sex")
+    if sex not in ("m", "f") or callback.from_user is None:
+        await callback.answer("Начните заново: «🧮 Калории»", show_alert=True)
+        return
+
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Анкета не найдена", show_alert=True)
+        return
+
+    profile = replace(profile, sex=sex, age=age)
+    await profiles.save(profile)
+    await state.clear()
+
+    if callback.message:
+        await _show_calories(callback.message, profile)
+    await callback.answer()
 
 
 @pay_router.message(F.text, ~F.text.startswith("/"), ~F.text.in_(MENU_TEXTS))
@@ -1584,6 +1671,7 @@ async def _set_commands(bot: Bot) -> None:
     public = [
         BotCommand(command="start", description="Начать"),
         BotCommand(command="plan", description="Мой план тренировок"),
+        BotCommand(command="calories", description="Калории и БЖУ"),
         BotCommand(command="sub", description="Подписка и пробный период"),
         BotCommand(command="help", description="Справка"),
     ]
