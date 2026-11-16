@@ -33,6 +33,8 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     BotCommand,
     BotCommandScopeChat,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
     BufferedInputFile,
     FSInputFile,
     CallbackQuery,
@@ -522,20 +524,49 @@ def _is_owner(user_id: int) -> bool:
     return user_id in ctx.settings.owner_ids
 
 
+# ---------------------------------------------------------------------------
+# Кнопки меню
+# ---------------------------------------------------------------------------
+BTN_SUB = "💳 Подписка"
+BTN_HELP = "ℹ️ Помощь"
+BTN_POST = "📝 Новый пост"
+BTN_TOPIC = "✍️ Пост на тему"
+BTN_BACKUP = "💾 Бэкап"
+
+MENU_TEXTS = {BTN_SUB, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
+
+
+def _public_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_HELP)]],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def _owner_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_POST), KeyboardButton(text=BTN_TOPIC)],
+            [KeyboardButton(text=BTN_BACKUP)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def _menu_for(user_id: int) -> ReplyKeyboardMarkup:
+    return _owner_menu() if _is_owner(user_id) else _public_menu()
+
+
 @pay_router.message(Command("start"))
 async def cmd_start(message: Message) -> None:
     """Публичное приветствие; владельцу показываем админскую памятку."""
     if message.from_user and _is_owner(message.from_user.id):
-        await message.answer(START_TEXT)
+        await message.answer(START_TEXT, reply_markup=_owner_menu())
         return
-    await message.answer(
-        PUBLIC_START_TEXT,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[
-                InlineKeyboardButton(text="Оформить подписку", callback_data="sub:menu")
-            ]]
-        ),
-    )
+    await message.answer(PUBLIC_START_TEXT, reply_markup=_public_menu())
 
 
 @pay_router.message(Command("help"))
@@ -544,7 +575,7 @@ async def cmd_help(message: Message) -> None:
         text = HELP_TEXT if ctx.settings.channel_id else HELP_TEXT + NO_PUBLISH_HINT
     else:
         text = PUBLIC_HELP_TEXT
-    await message.answer(text)
+    await message.answer(text, reply_markup=_menu_for(message.from_user.id))
 
 
 @pay_router.callback_query(F.data == "sub:menu")
@@ -602,6 +633,25 @@ async def _generate_and_send(message: Message, topic: str) -> None:
         logger.exception("Не удалось отправить пост в чат %s", message.chat.id)
 
 
+@router.message(F.text == BTN_POST)
+async def btn_post(message: Message) -> None:
+    await cmd_post(message)
+
+
+@router.message(F.text == BTN_TOPIC)
+async def btn_topic(message: Message) -> None:
+    await message.answer(
+        "Напишите тему одной командой:\n"
+        "<code>/topic сон и восстановление</code>\n"
+        "Например: <code>/topic микротренировка 15 минут дома</code>"
+    )
+
+
+@router.message(F.text == BTN_BACKUP)
+async def btn_backup(message: Message) -> None:
+    await cmd_backup(message)
+
+
 async def _safe_edit(message: Message, text: str) -> None:
     """edit_text может упасть (сообщение удалено, нет прав) — не роняем хендлер."""
     try:
@@ -648,7 +698,17 @@ async def on_publish(callback: CallbackQuery) -> None:
     await callback.answer("Опубликовано ✅")
 
 
-@pay_router.message(F.text, ~F.text.startswith("/"))
+@pay_router.message(F.text == BTN_SUB)
+async def btn_sub(message: Message) -> None:
+    await cmd_sub(message)
+
+
+@pay_router.message(F.text == BTN_HELP)
+async def btn_help(message: Message) -> None:
+    await cmd_help(message)
+
+
+@pay_router.message(F.text, ~F.text.startswith("/"), ~F.text.in_(MENU_TEXTS))
 async def on_unknown(message: Message) -> None:
     """Сообщение без команды раньше просто игнорировалось («is not handled»).
 
