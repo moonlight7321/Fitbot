@@ -731,13 +731,34 @@ def _groups_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _group_keyboard(group: str) -> InlineKeyboardMarkup:
-    rows = []
-    for ex in exercises.by_group(group):
-        mark = "" if ex.free else " 🔒"
-        rows.append([
-            InlineKeyboardButton(text=f"{ex.name_ru}{mark}", callback_data=f"ex:show:{ex.slug}")
-        ])
+PAGE_SIZE = 6
+
+
+def _group_keyboard(group: str, page: int = 0) -> InlineKeyboardMarkup:
+    items = exercises.by_group(group)
+    total_pages = max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * PAGE_SIZE
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{ex.name_ru}{'' if ex.free else ' 🔒'}",
+                callback_data=f"ex:show:{ex.slug}",
+            )
+        ]
+        for ex in items[start:start + PAGE_SIZE]
+    ]
+
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="←", callback_data=f"ex:grp:{group}:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="ex:noop"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton(text="→", callback_data=f"ex:grp:{group}:{page + 1}"))
+        rows.append(nav)
+
     rows.append([InlineKeyboardButton(text="← Группы", callback_data="ex:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -809,9 +830,16 @@ async def cb_ex_back(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@pay_router.callback_query(F.data == "ex:noop")
+async def cb_ex_noop(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+
 @pay_router.callback_query(F.data.startswith("ex:grp:"))
 async def cb_ex_group(callback: CallbackQuery) -> None:
-    group = (callback.data or "").split(":", 2)[2]
+    parts = (callback.data or "").split(":")
+    group = parts[2] if len(parts) > 2 else ""
+    page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
     items = exercises.by_group(group)
     if not items:
         await callback.answer("В этой группе пока пусто", show_alert=True)
@@ -822,7 +850,7 @@ async def cb_ex_group(callback: CallbackQuery) -> None:
             await callback.message.edit_text(
                 f"<b>{group}</b> — упражнений: {len(items)}, бесплатных: {free}.\n"
                 "Нажмите карточку:",
-                reply_markup=_group_keyboard(group),
+                reply_markup=_group_keyboard(group, page),
             )
         except Exception:  # noqa: BLE001
             logger.debug("Не удалось обновить список упражнений группы %s", group)
