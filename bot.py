@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Union
 from dotenv import load_dotenv
 load_dotenv()
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
@@ -112,6 +112,43 @@ ctx = _Context()
 
 # Черновики, ожидающие нажатия кнопки «Опубликовать в канал»
 _pending: Dict[str, GeneratedContent] = {}
+
+
+class OwnerOnlyMiddleware(BaseMiddleware):
+    """Пускает дальше только владельца бота.
+
+    Вешается как outer_middleware на message и callback_query, то есть
+    срабатывает до фильтров: чужой не сможет ни сгенерировать пост, ни нажать
+    кнопку публикации. Автопостинг по расписанию middleware не касается —
+    ему и не нужно, он идёт изнутри процесса.
+    """
+
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        owners = ctx.settings.owner_ids
+
+        if user is not None and user.id in owners:
+            return await handler(event, data)
+
+        if user is None:
+            logger.warning("Доступ запрещён: апдейт без пользователя")
+            return None
+
+        logger.warning("Доступ запрещён: id=%s, %s", user.id, f"@{user.username}" if user.username else "без username")
+
+        if not owners:
+            text = (
+                "Это приватный бот. Владелец ещё не задал OWNER_ID.\n"
+                f"Ваш Telegram id: {user.id} — передайте его владельцу."
+            )
+        else:
+            text = "Это приватный бот. Генерация и публикация доступны только владельцу."
+
+        if isinstance(event, CallbackQuery):
+            await event.answer(text[:190], show_alert=True)
+        elif isinstance(event, Message):
+            await event.answer(text)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +641,13 @@ async def main() -> None:
 
     settings = load_settings()
     log_build_info()  # маркер сборки: только теперь у logging есть обработчик
+    if settings.owner_ids:
+        logger.info("Доступ ограничен владельцем: %s", ", ".join(str(i) for i in settings.owner_ids))
+    else:
+        logger.error(
+            "OWNER_ID не задан — бот откажет всем. Напишите боту любое сообщение, "
+            "его id появится в логе в строке «Доступ запрещён»."
+        )
     logger.info("Канал для публикации: %s (как пришло из панели: %s)",
                 settings.channel_id, os.getenv("CHANNEL_ID", "не задан"))
 
@@ -613,6 +657,10 @@ async def main() -> None:
     )
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
+
+    # Ограничение доступа: всё, что делает бот, доступно только владельцу
+    dispatcher.message.outer_middleware(OwnerOnlyMiddleware())
+    dispatcher.callback_query.outer_middleware(OwnerOnlyMiddleware())
 
     ctx.settings = settings
     ctx.ai = DeepSeekClient(settings)

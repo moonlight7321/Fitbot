@@ -108,6 +108,7 @@ class Settings:
     image_height: int
     image_timeout: float
     autopost_enabled: bool
+    owner_ids: Tuple[int, ...]
     post_interval_hours: float
     post_times: Tuple[Tuple[int, int], ...]
     timezone: str
@@ -148,6 +149,20 @@ def _env_bool(name: str, default: bool) -> bool:
     if not raw:
         return default
     return raw.lower() in {"1", "true", "yes", "y", "on", "да"}
+
+
+def _parse_ids(raw: str) -> Tuple[int, ...]:
+    """Список Telegram id владельцев из «123, 456» (или ADMIN_IDS)."""
+    result = []
+    for chunk in (raw or "").replace(";", ",").split(","):
+        chunk = chunk.strip().lstrip("@")
+        if not chunk:
+            continue
+        try:
+            result.append(int(chunk))
+        except ValueError:
+            logger.warning("OWNER_ID: «%s» — не число, пропускаю", chunk)
+    return tuple(result)
 
 
 def _normalize_channel(value: str) -> str:
@@ -234,6 +249,8 @@ def load_settings() -> Settings:
         image_height=_env_int("IMAGE_HEIGHT", 1024, 256, 2048),
         image_timeout=_env_float("IMAGE_TIMEOUT", 90.0, 10.0, 300.0),
         autopost_enabled=_env_bool("AUTOPOST_ENABLED", True),
+        # Пусто -> бот отвечает отказом всем; id владельца видно в логе после сообщения боту
+        owner_ids=_parse_ids(_env_str("OWNER_ID") or _env_str("ADMIN_IDS")),
         # Дефолт — раз в 6 часов; минимум 15 минут, чтобы не спамить канал
         post_interval_hours=_env_float("POST_INTERVAL_HOURS", 6.0, 0.25, 168.0),
         post_times=_parse_times(_env_str("POST_TIMES")),
