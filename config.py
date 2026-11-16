@@ -150,6 +150,36 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.lower() in {"1", "true", "yes", "y", "on", "да"}
 
 
+def _normalize_channel(value: str) -> str:
+    """Приводит CHANNEL_ID к виду, который понимает Bot API.
+
+    Панель хостинга любит ссылки: «t.me/Sport_PP7321» или
+    «https://t.me/Sport_PP7321» — Bot API на такое отвечает «chat not found».
+    Числовые id вида -1001234567890 оставляем как есть.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    for prefix in ("https://", "http://"):
+        if lowered.startswith(prefix):
+            raw = raw[len(prefix):]
+            lowered = raw.lower()
+            break
+    for prefix in ("t.me/", "telegram.me/", "telegram.dog/"):
+        if lowered.startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    raw = raw.strip("/")
+    if not raw:
+        return ""
+    if raw.startswith("@"):
+        return raw
+    if raw.lstrip("-").isdigit():   # -100... — числовой id канала
+        return raw
+    return "@" + raw
+
+
 def _parse_times(raw: str) -> Tuple[Tuple[int, int], ...]:
     """Разбирает POST_TIMES вида «09:00, 19:30» в кортеж пар (час, минута)."""
     result = []
@@ -194,7 +224,7 @@ def load_settings() -> Settings:
     return Settings(
         telegram_token=token,
         deepseek_api_key=deepseek_key,
-        channel_id=_env_str("CHANNEL_ID") or None,
+        channel_id=_normalize_channel(_env_str("CHANNEL_ID")) or None,
         deepseek_model=_env_str("DEEPSEEK_MODEL", "deepseek-chat"),
         deepseek_base_url=_env_str("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         request_timeout=_env_float("REQUEST_TIMEOUT", 90.0, 10.0, 300.0),

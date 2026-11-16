@@ -17,6 +17,7 @@ import html
 import json
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
@@ -148,6 +149,14 @@ async def generate_content(topic: str) -> GeneratedContent:
             logger.warning("Не удалось поправить объём: %s", exc)
             notes.append(f"Объём вне нормы ({length_note}).")
 
+    # Страховка: модель не всегда слушается — режем сами, но по границе предложения
+    if len(post) > settings.post_max_chars:
+        fitted = _fit_length(post, settings.post_max_chars)
+        if fitted != post:
+            logger.warning("Пост обрезан до %s символов (было %s)", len(fitted), len(post))
+            notes.append(f"Пост обрезан автоматически до {len(fitted)} символов.")
+            post = fitted
+
     # --- Проверка и картинка идут параллельно: экономим время пользователя ---
     review_result, image_result = await asyncio.gather(
         ai.review_post(post),
@@ -209,6 +218,33 @@ async def generate_content(topic: str) -> GeneratedContent:
 # ---------------------------------------------------------------------------
 # Отправка и публикация
 # ---------------------------------------------------------------------------
+def _fit_length(text: str, limit: int) -> str:
+    """Аварийная обрезка: пост не должен уходить в канал длиннее лимита.
+
+    Хэштеги сохраняем отдельным блоком, тело режем по границе предложения,
+    а если предложение одно — по последнему пробелу.
+    """
+    if len(text) <= limit:
+        return text
+
+    hashtags = " ".join(re.findall(r"#[\wА-Яа-яЁё]+", text))
+    body = re.sub(r"#[\wА-Яа-яЁё]+", "", text).strip()
+
+    budget = limit - (len(hashtags) + 2 if hashtags else 0)
+    if budget < 120:          # хэштеги съели слишком много места — жертвуем ими
+        hashtags, budget = "", limit
+
+    cut = body[:budget]
+    boundary = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "), cut.rfind("\n"))
+    if boundary > budget * 0.6:
+        cut = cut[: boundary + 1]
+    elif " " in cut:
+        cut = cut[: cut.rfind(" ")]
+    body = cut.rstrip(" ,;:-—")
+
+    return f"{body}\n\n{hashtags}".strip() if hashtags else body
+
+
 def format_review(content: GeneratedContent) -> str:
     """Сообщение «Проверка перед публикацией» с пометкой статуса."""
     status = "✅ замечаний нет" if content.review_ok else "⚠️ есть замечания"
@@ -568,6 +604,8 @@ async def main() -> None:
 
     settings = load_settings()
     log_build_info()  # маркер сборки: только теперь у logging есть обработчик
+    logger.info("Канал для публикации: %s (как пришло из панели: %s)",
+                settings.channel_id, os.getenv("CHANNEL_ID", "не задан"))
 
     bot = Bot(
         token=settings.telegram_token,
