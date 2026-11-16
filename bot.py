@@ -650,7 +650,7 @@ def _sub_screen(status: "subs.Status") -> tuple:
     if orders.PAYMENT_MODE == "card" and orders.CARD_NUMBER:
         manual = True
     else:
-        manual = bool(orders.PAYMENT_LINK or orders.PAYMENT_QR_PATH.exists())
+        manual = bool(orders.PAYMENT_LINK or orders.qr_file())
     if manual:
         rows.append([
             InlineKeyboardButton(
@@ -801,7 +801,7 @@ def _order_keyboard(order: "orders.Order") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _notify_owner(order: "orders.Order", user) -> None:
+async def _notify_owner(order: "orders.Order", user, bot: Bot) -> None:
     """Отправляет владельцу заявку на подтверждение."""
     owners = ctx.settings.owner_ids
     if not owners:
@@ -824,18 +824,20 @@ async def _notify_owner(order: "orders.Order", user) -> None:
     )
     for owner_id in owners:
         try:
-            await ctx.bot.send_message(owner_id, text, reply_markup=markup)
+            await bot.send_message(owner_id, text, reply_markup=markup)
         except Exception:  # noqa: BLE001
             logger.exception("Не удалось отправить заявку владельцу %s", owner_id)
 
 
 @pay_router.callback_query(F.data == "order:new")
 async def cb_order_new(callback: CallbackQuery) -> None:
+    already = False
     try:
         order = await orders.create_order(callback.from_user.id, subs.SUBSCRIPTION_DAYS)
+        already = False
     except orders.OrderExists as exc:
         order = exc.order
-        await callback.answer("У вас уже есть активная заявка", show_alert=True)
+        already = True
     except Exception:  # noqa: BLE001
         logger.exception("Не удалось создать заявку")
         await callback.answer("Не получилось создать заявку, попробуйте позже", show_alert=True)
@@ -844,10 +846,11 @@ async def cb_order_new(callback: CallbackQuery) -> None:
     chat_id = callback.message.chat.id if callback.message else callback.from_user.id
     text = _order_text(order)
     try:
-        if orders.PAYMENT_MODE != "card" and orders.PAYMENT_QR_PATH.exists():
+        qr = orders.qr_file()
+        if orders.PAYMENT_MODE != "card" and qr is not None:
             await callback.bot.send_photo(
                 chat_id,
-                FSInputFile(orders.PAYMENT_QR_PATH),
+                FSInputFile(qr),
                 caption=text,
                 reply_markup=_order_keyboard(order),
             )
@@ -857,7 +860,10 @@ async def cb_order_new(callback: CallbackQuery) -> None:
         logger.exception("Не удалось отправить реквизиты")
         await callback.answer("Не получилось отправить реквизиты", show_alert=True)
         return
-    await callback.answer()
+    if already:
+        await callback.answer("У вас уже есть активная заявка", show_alert=True)
+    else:
+        await callback.answer()
 
 
 @pay_router.callback_query(F.data.startswith("order:paid:"))
@@ -866,6 +872,11 @@ async def cb_order_paid(callback: CallbackQuery) -> None:
         order_id = int((callback.data or "").split(":")[2])
     except (IndexError, ValueError):
         await callback.answer("Некорректная заявка", show_alert=True)
+        return
+
+    current = await orders.get(order_id)
+    if current is not None and current.status == orders.STATUS_WAITING:
+        await callback.answer("Заявка уже на проверке, ждите подтверждения", show_alert=True)
         return
 
     try:
@@ -882,21 +893,27 @@ async def cb_order_paid(callback: CallbackQuery) -> None:
         return
 
     await callback.answer("Передал на проверку, доступ открою после подтверждения")
-    await _notify_owner(order, callback.from_user)
+    await _notify_owner(order, callback.from_user, callback.bot)
 
 
 @router.callback_query(F.data.startswith("order:ok:"))
 async def cb_order_approve(callback: CallbackQuery) -> None:
     order_id = int((callback.data or "").split(":")[2])
-    try:
-        order = await orders.review(order_id, callback.from_user.id, approve=True)
-    except (orders.OrderNotFound, orders.OrderExpired) as exc:
-        await callback.answer(f"Нельзя подтвердить: {exc}", show_alert=True)
+    order = await orders.get(order_id)
+    if order is None:
+        await callback.answer("Заявка не найдена", show_alert=True)
         return
 
+    # Сначала продлеваем доступ, потом закрываем заявку: если запись в БД
+    # сорвётся, заявка останется активной и подтверждение можно повторить.
     status = await subs.add_paid_days(
         order.user_id, order.days, charge_id=f"order:{order.id}", amount=int(round(order.amount))
     )
+    try:
+        order = await orders.review(order_id, callback.from_user.id, approve=True)
+    except (orders.OrderNotFound, orders.OrderExpired) as exc:
+        await callback.answer(f"Доступ выдан, но заявку закрыть не вышло: {exc}", show_alert=True)
+        return
     until = status.paid_until.strftime("%d.%m.%Y") if status.paid_until else "—"
 
     try:

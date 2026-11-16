@@ -30,6 +30,20 @@ PAYMENT_QR_PATH = Path(os.getenv("PAYMENT_QR_PATH", "payment_qr.png"))
 CARD_NUMBER = os.getenv("CARD_NUMBER", "").strip()
 CARD_HOLDER = os.getenv("CARD_HOLDER", "").strip()
 
+# Если путь не задан или файла нет — пробуем типовые имена рядом с ботом
+_QR_FALLBACKS = ("payment_qr.png", "payment_qr.jpg", "payment_qr.jpeg")
+
+
+def qr_file() -> Optional[Path]:
+    """Файл QR, который реально существует, или None."""
+    if PAYMENT_QR_PATH.exists():
+        return PAYMENT_QR_PATH
+    for name in _QR_FALLBACKS:
+        candidate = Path(name)
+        if candidate.exists():
+            return candidate
+    return None
+
 STATUS_NEW = "new"
 STATUS_WAITING = "waiting_review"
 STATUS_PAID = "paid"
