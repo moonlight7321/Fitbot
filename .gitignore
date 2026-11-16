@@ -2,6 +2,8 @@
 drafts.json
 fitbot.db
 fitbot.db-journal
+fitbot.db-wal
+fitbot.db-shm
 payment_qr.png
 backups/
 *.restore.tmp

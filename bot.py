@@ -582,7 +582,8 @@ async def cmd_help(message: Message) -> None:
         text = HELP_TEXT if ctx.settings.channel_id else HELP_TEXT + NO_PUBLISH_HINT
     else:
         text = PUBLIC_HELP_TEXT
-    await message.answer(text, reply_markup=_menu_for(message.from_user.id))
+    user_id = message.from_user.id if message.from_user else 0
+    await message.answer(text, reply_markup=_menu_for(user_id))
 
 
 @pay_router.callback_query(F.data == "sub:menu")
@@ -748,18 +749,29 @@ async def _send_exercise(callback: CallbackQuery, ex: "exercises.Exercise") -> N
         await callback.answer()
         return
 
-    cached = await exercises.cached_file_ids(ex.slug)
-    media = []
-    for idx, path in enumerate(images):
-        source = cached.get(idx) or FSInputFile(path)
-        media.append(
-            InputMediaPhoto(media=source, caption=ex.card_text() if idx == 0 else None)
-        )
+    sent = None
+    for attempt in (1, 2):
+        cached = await exercises.cached_file_ids(ex.slug) if attempt == 1 else {}
+        media = []
+        for idx, path in enumerate(images):
+            source = cached.get(idx) or FSInputFile(path)
+            media.append(
+                InputMediaPhoto(media=source, caption=ex.card_text() if idx == 0 else None)
+            )
+        try:
+            sent = await callback.message.answer_media_group(media)
+            break
+        except Exception:  # noqa: BLE001
+            if attempt == 1 and cached:
+                # file_id мог устареть (сменился токен, файл удалён) — грузим заново
+                logger.warning("Кэш file_id не сработал для %s, загружаю файлы заново", ex.slug)
+                await exercises.forget_file_ids(ex.slug)
+                continue
+            logger.exception("Не удалось отправить карточку %s", ex.slug)
+            await callback.answer("Не получилось отправить карточку", show_alert=True)
+            return
 
-    try:
-        sent = await callback.message.answer_media_group(media)
-    except Exception:  # noqa: BLE001
-        logger.exception("Не удалось отправить карточку %s", ex.slug)
+    if sent is None:
         await callback.answer("Не получилось отправить карточку", show_alert=True)
         return
 
@@ -774,6 +786,9 @@ async def _send_exercise(callback: CallbackQuery, ex: "exercises.Exercise") -> N
 @pay_router.message(F.text == BTN_EX)
 async def btn_exercises(message: Message) -> None:
     total = len(exercises.all_exercises())
+    if total == 0:
+        await message.answer("Каталог упражнений пока пуст.")
+        return
     free = sum(1 for e in exercises.all_exercises() if e.free)
     await message.answer(
         f"<b>Упражнения</b>\n{total} карточек, {free} доступны бесплатно.\n"
@@ -785,9 +800,12 @@ async def btn_exercises(message: Message) -> None:
 @pay_router.callback_query(F.data == "ex:back")
 async def cb_ex_back(callback: CallbackQuery) -> None:
     if callback.message:
-        await callback.message.edit_text(
-            "Выберите группу мышц:", reply_markup=_groups_keyboard()
-        )
+        try:
+            await callback.message.edit_text(
+                "Выберите группу мышц:", reply_markup=_groups_keyboard()
+            )
+        except Exception:  # noqa: BLE001 — «message is not modified» и прочее
+            logger.debug("Не удалось обновить меню групп")
     await callback.answer()
 
 
@@ -800,11 +818,14 @@ async def cb_ex_group(callback: CallbackQuery) -> None:
         return
     free = sum(1 for e in items if e.free)
     if callback.message:
-        await callback.message.edit_text(
-            f"<b>{group}</b> — упражнений: {len(items)}, бесплатных: {free}.\n"
-            "Нажмите карточку:",
-            reply_markup=_group_keyboard(group),
-        )
+        try:
+            await callback.message.edit_text(
+                f"<b>{group}</b> — упражнений: {len(items)}, бесплатных: {free}.\n"
+                "Нажмите карточку:",
+                reply_markup=_group_keyboard(group),
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Не удалось обновить список упражнений группы %s", group)
     await callback.answer()
 
 

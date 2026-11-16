@@ -118,6 +118,8 @@ def by_slug(slug: str) -> Optional[Exercise]:
 def _open() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=5)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.executescript(_SCHEMA)
     return conn
 
@@ -149,5 +151,19 @@ async def cached_file_ids(slug: str) -> Dict[int, str]:
     return await asyncio.to_thread(_ids_sync, slug)
 
 
+def _forget_ids_sync(slug: str) -> None:
+    conn = _open()
+    try:
+        conn.execute("DELETE FROM media_cache WHERE slug = ?", (slug,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 async def remember_file_ids(slug: str, ids: Dict[int, str]) -> None:
     await asyncio.to_thread(_save_ids_sync, slug, ids)
+
+
+async def forget_file_ids(slug: str) -> None:
+    """Сбрасывает кэш file_id: они могли устареть или быть от другого бота."""
+    await asyncio.to_thread(_forget_ids_sync, slug)
