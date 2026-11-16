@@ -1169,6 +1169,16 @@ async def main() -> None:
                 settings.channel_id, exc,
             )
 
+    qr = orders.qr_file()
+    logger.info(
+        "Оплата переводом: режим=%s, ссылка=%s, QR=%s, цена=%s руб, TTL=%s мин",
+        orders.PAYMENT_MODE,
+        "задана" if orders.PAYMENT_LINK else "НЕ ЗАДАНА",
+        qr.name if qr else "файла нет",
+        orders.PRICE_RUB,
+        orders.ORDER_TTL_MINUTES,
+    )
+
     scheduler = None
     if settings.autopost_enabled:
         if settings.channel_id:
