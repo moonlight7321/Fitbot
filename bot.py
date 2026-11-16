@@ -741,16 +741,24 @@ def _groups_keyboard() -> InlineKeyboardMarkup:
 PAGE_SIZE = 6
 
 
-def _group_keyboard(group: str, page: int = 0) -> InlineKeyboardMarkup:
+async def _restricted_slugs(user_id: int) -> set:
+    """Упражнения, которые не рекомендованы при ограничениях пользователя."""
+    profile = await profiles.get(user_id)
+    return planner.excluded_slugs(profile.limits) if profile else set()
+
+
+def _group_keyboard(group: str, page: int = 0, restricted: set | None = None) -> InlineKeyboardMarkup:
     items = exercises.by_group(group)
     total_pages = max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
     start = page * PAGE_SIZE
 
+    restricted = restricted or set()
     rows = [
         [
             InlineKeyboardButton(
-                text=f"{ex.name_ru}{'' if ex.free else ' 🔒'}",
+                text=("⚠️ " if ex.slug in restricted else "")
+                     + f"{ex.name_ru}{'' if ex.free else ' 🔒'}",
                 callback_data=f"ex:show:{ex.slug}",
             )
         ]
@@ -770,10 +778,11 @@ def _group_keyboard(group: str, page: int = 0) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _send_exercise(callback: CallbackQuery, ex: "exercises.Exercise") -> None:
+async def _send_exercise(callback: CallbackQuery, ex: "exercises.Exercise", warning: str = "") -> None:
+    caption = warning + ex.card_text()
     images = ex.images()
     if not images:
-        await callback.message.answer(ex.card_text())
+        await callback.message.answer(caption)
         await callback.answer()
         return
 
@@ -787,7 +796,7 @@ async def _send_exercise(callback: CallbackQuery, ex: "exercises.Exercise") -> N
         for idx, path in enumerate(images):
             source = cached.get(idx) or FSInputFile(path)
             media.append(
-                InputMediaPhoto(media=source, caption=ex.card_text() if idx == 0 else None)
+                InputMediaPhoto(media=source, caption=caption if idx == 0 else None)
             )
         try:
             sent = await callback.message.answer_media_group(media)
@@ -858,12 +867,14 @@ async def cb_ex_group(callback: CallbackQuery) -> None:
         await callback.answer("В этой группе пока пусто", show_alert=True)
         return
     free = sum(1 for e in items if e.free)
+    restricted = await _restricted_slugs(callback.from_user.id)
+    note = "\n⚠️ — не рекомендуется при ваших ограничениях." if restricted else ""
     if callback.message:
         try:
             await callback.message.edit_text(
-                f"<b>{group}</b> — упражнений: {len(items)}, бесплатных: {free}.\n"
+                f"<b>{group}</b> — упражнений: {len(items)}, бесплатных: {free}.{note}\n"
                 "Нажмите карточку:",
-                reply_markup=_group_keyboard(group, page),
+                reply_markup=_group_keyboard(group, page, restricted),
             )
         except Exception:  # noqa: BLE001
             logger.debug("Не удалось обновить список упражнений группы %s", group)
@@ -892,7 +903,11 @@ async def cb_ex_show(callback: CallbackQuery) -> None:
             )
         return
 
-    await _send_exercise(callback, ex)
+    restricted = await _restricted_slugs(callback.from_user.id)
+    warning = ""
+    if ex.slug in restricted:
+        warning = "⚠️ <i>С учётом ваших ограничений это упражнение не рекомендуется.</i>\n\n"
+    await _send_exercise(callback, ex, warning)
 
 
 # ---------------------------------------------------------------------------
