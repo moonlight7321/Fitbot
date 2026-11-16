@@ -1173,7 +1173,12 @@ def _make_profile(user_id: int, data: dict, existing=None) -> "profiles.Profile"
 
 async def _show_calories(message: Message, profile: "profiles.Profile") -> None:
     result = calories.compute(profile)
-    await message.answer(calories.render(profile, result))
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="✏️ Изменить пол и возраст", callback_data="cal:edit")
+        ]]
+    )
+    await message.answer(calories.render(profile, result), reply_markup=markup)
 
 
 @pay_router.message(F.text == BTN_CAL)
@@ -1196,6 +1201,17 @@ async def cmd_calories(message: Message, state: FSMContext) -> None:
         )
         return
     await _show_calories(message, profile)
+
+
+@pay_router.callback_query(F.data == "cal:edit")
+async def cal_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if callback.message:
+        await callback.message.answer(
+            "Изменим пол и возраст.\nШаг 1 — пол:",
+            reply_markup=_kb({"m": "Мужской", "f": "Женский"}, "cal:sex:"),
+        )
+    await callback.answer()
 
 
 @pay_router.callback_query(F.data.startswith("cal:sex:"))
