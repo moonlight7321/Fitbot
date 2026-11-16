@@ -620,6 +620,19 @@ async def main() -> None:
 
     await _set_commands(bot)
 
+    # Проверяем канал сразу на старте: иначе «chat not found» всплывёт
+    # только в момент автопоста, например в 07:00.
+    if settings.channel_id:
+        try:
+            chat = await bot.get_chat(settings.channel_id)
+            logger.info("Канал доступен: %s (@%s), id=%s", chat.title, chat.username, chat.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Бот не видит канал %s: %s. Проверьте CHANNEL_ID в панели "
+                "(нужен @username или -100…) и права администратора.",
+                settings.channel_id, exc,
+            )
+
     scheduler = None
     if settings.autopost_enabled:
         if settings.channel_id:
