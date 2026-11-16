@@ -784,19 +784,21 @@ def _order_text(order: "orders.Order") -> str:
         if orders.PAYMENT_LINK:
             lines += ["", f"Либо по ссылке: {html.escape(orders.PAYMENT_LINK)}"]
     else:
-        lines.append("Оплата по СБП: отсканируйте QR ниже или откройте ссылку.")
         if orders.PAYMENT_LINK:
-            lines.append(html.escape(orders.PAYMENT_LINK))
+            lines.append("Оплата по СБП: нажмите кнопку «Оплатить по СБП» ниже.")
+        else:
+            lines.append("Оплата по СБП: отсканируйте QR ниже.")
     lines += ["", "Копейки в сумме — это номер заказа, по ним я найду ваш перевод."]
     return "\n".join(lines)
 
 
 def _order_keyboard(order: "orders.Order") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"order:paid:{order.id}")
-        ]]
-    )
+    rows = []
+    # Ссылку СБП Telegram открывает в приложении банка — картинка не обязательна
+    if orders.PAYMENT_MODE != "card" and orders.PAYMENT_LINK:
+        rows.append([InlineKeyboardButton(text="💳 Оплатить по СБП", url=orders.PAYMENT_LINK)])
+    rows.append([InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"order:paid:{order.id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def _notify_owner(order: "orders.Order", user) -> None:
