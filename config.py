@@ -112,6 +112,8 @@ class Settings:
     post_interval_hours: float
     post_times: Tuple[Tuple[int, int], ...]
     timezone: str
+    webapp_url: Optional[str]
+    webapp_port: int
 
 
 def _env_str(name: str, default: str = "") -> str:
@@ -255,4 +257,8 @@ def load_settings() -> Settings:
         post_interval_hours=_env_float("POST_INTERVAL_HOURS", 6.0, 0.25, 168.0),
         post_times=_parse_times(_env_str("POST_TIMES")),
         timezone=_env_str("TIMEZONE", "Europe/Moscow"),
+        # Публичный HTTPS-адрес мини-аппа (кнопка в Telegram) и локальный порт,
+        # на котором поднимается aiohttp-сервер внутри процесса бота
+        webapp_url=_env_str("WEBAPP_URL") or None,
+        webapp_port=_env_int("WEBAPP_PORT", 0, 0, 65535),
     )

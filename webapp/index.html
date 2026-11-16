@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Тренировки и питание</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">Sport Bot</div>
+    <div id="status" class="badge">…</div>
+  </header>
+
+  <nav class="tabs">
+    <button data-tab="plan" class="tab active">План</button>
+    <button data-tab="exercises" class="tab">Упражнения</button>
+    <button data-tab="diary" class="tab">Дневник</button>
+    <button data-tab="calories" class="tab">Калории</button>
+  </nav>
+
+  <main id="view" class="view"></main>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

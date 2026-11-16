@@ -37,7 +37,9 @@ from aiogram.types import (
     BotCommandScopeChat,
     InputMediaPhoto,
     KeyboardButton,
+    MenuButtonWebApp,
     ReplyKeyboardMarkup,
+    WebAppInfo,
     BufferedInputFile,
     FSInputFile,
     CallbackQuery,
@@ -61,6 +63,7 @@ import orders
 import planner
 import profiles
 import subscriptions as subs
+import webapp_api
 
 logger = logging.getLogger(__name__)
 
@@ -540,12 +543,13 @@ BTN_EX = "🏋️ Упражнения"
 BTN_PLAN = "📋 Мой план"
 BTN_CAL = "🧮 Калории"
 BTN_DIARY = "🍽 Дневник"
+BTN_APP = "📱 Приложение"
 BTN_HELP = "ℹ️ Помощь"
 BTN_POST = "📝 Новый пост"
 BTN_TOPIC = "✍️ Пост на тему"
 BTN_BACKUP = "💾 Бэкап"
 
-MENU_TEXTS = {BTN_SUB, BTN_EX, BTN_PLAN, BTN_CAL, BTN_DIARY, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
+MENU_TEXTS = {BTN_SUB, BTN_EX, BTN_PLAN, BTN_CAL, BTN_DIARY, BTN_APP, BTN_HELP, BTN_POST, BTN_TOPIC, BTN_BACKUP}
 
 
 def _public_menu() -> ReplyKeyboardMarkup:
@@ -553,7 +557,8 @@ def _public_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
             [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_CAL)],
-            [KeyboardButton(text=BTN_DIARY), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_DIARY), KeyboardButton(text=BTN_APP)],
+            [KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -565,7 +570,8 @@ def _owner_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
             [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_CAL)],
-            [KeyboardButton(text=BTN_DIARY), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_DIARY), KeyboardButton(text=BTN_APP)],
+            [KeyboardButton(text=BTN_HELP)],
             [KeyboardButton(text=BTN_POST), KeyboardButton(text=BTN_TOPIC)],
             [KeyboardButton(text=BTN_BACKUP)],
         ],
@@ -1458,6 +1464,28 @@ async def diary_input(message: Message, state: FSMContext) -> None:
     await _show_diary(message, message.from_user.id)
 
 
+@pay_router.message(F.text == BTN_APP)
+@pay_router.message(Command("app"))
+async def cmd_app(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    url = ctx.settings.webapp_url
+    if not url:
+        await message.answer(
+            "Мини-апп ещё не подключён: задайте <code>WEBAPP_URL</code> в панели "
+            "и сделайте Redeploy."
+        )
+        return
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="Открыть приложение", web_app=WebAppInfo(url=url))
+        ]]
+    )
+    await message.answer(
+        "В приложении: план тренировок, упражнения с техникой, дневник питания и калории.",
+        reply_markup=markup,
+    )
+
+
 @pay_router.message(F.text, ~F.text.startswith("/"), ~F.text.in_(MENU_TEXTS))
 async def on_unknown(message: Message) -> None:
     """Сообщение без команды раньше просто игнорировалось («is not handled»).
@@ -1957,6 +1985,17 @@ async def main() -> None:
 
     await _set_commands(bot)
 
+    # Кнопка меню в Telegram открывает мини-апп (если задан публичный URL)
+    if settings.webapp_url:
+        try:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="Приложение", web_app=WebAppInfo(url=settings.webapp_url)
+                )
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("Не удалось установить кнопку меню мини-аппа")
+
     # База пропала (новый контейнер) — предупреждаем владельца, но не падаем
     if not backup.DB_PATH.exists() and settings.owner_ids:
         for owner_id in settings.owner_ids:
@@ -2007,6 +2046,12 @@ async def main() -> None:
             logger.warning("AUTOPOST_ENABLED=true, но CHANNEL_ID не задан — автопостинг выключен")
 
     backup_task = asyncio.create_task(_daily_backup(bot))
+
+    if settings.webapp_port:
+        try:
+            await webapp_api.start(settings)
+        except Exception:  # noqa: BLE001
+            logger.exception("Не удалось запустить мини-апп на порту %s", settings.webapp_port)
 
     try:
         logger.info("Бот запущен, жду команды")
