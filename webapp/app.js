@@ -75,8 +75,8 @@ function renderExercises() {
   return state.exercises.groups.map(group => ''
     + '<div class="card"><h2>' + esc(group.group) + '</h2><div class="ex-grid">'
     + group.items.map(item => ''
-        + '<button class="ex ' + (item.free ? '' : 'locked') + '" data-slug="' + esc(item.slug) + '">'
-        + esc(item.name) + (item.free ? '' : ' 🔒')
+        + '<button class="ex ' + (item.locked ? 'locked' : '') + '" data-slug="' + esc(item.slug) + '">'
+        + esc(item.name) + (item.locked ? ' 🔒' : '')
         + ' <small>' + esc(item.level) + '</small></button>').join('')
     + '</div></div>').join('');
 }

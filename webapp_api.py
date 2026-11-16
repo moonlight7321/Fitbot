@@ -153,13 +153,16 @@ async def api_overview(request: web.Request) -> web.Response:
 
 
 async def api_exercises(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    access = bool(user_id) and await subs.has_access(user_id)
     groups = []
     for group in exercises.groups():
         items = exercises.by_group(group)
         groups.append({
             "group": group,
             "items": [
-                {"slug": e.slug, "name": e.name_ru, "free": e.free, "level": e.level}
+                {"slug": e.slug, "name": e.name_ru, "free": e.free,
+                 "level": e.level, "locked": not e.free and not access}
                 for e in items
             ],
         })

@@ -769,7 +769,9 @@ async def _restricted_slugs(user_id: int) -> set:
     return planner.excluded_slugs(profile.limits) if profile else set()
 
 
-def _group_keyboard(group: str, page: int = 0, restricted: set | None = None) -> InlineKeyboardMarkup:
+def _group_keyboard(
+    group: str, page: int = 0, restricted: set | None = None, unlocked: bool = False
+) -> InlineKeyboardMarkup:
     items = exercises.by_group(group)
     total_pages = max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
@@ -780,7 +782,7 @@ def _group_keyboard(group: str, page: int = 0, restricted: set | None = None) ->
         [
             InlineKeyboardButton(
                 text=("⚠️ " if ex.slug in restricted else "")
-                     + f"{ex.name_ru}{'' if ex.free else ' 🔒'}",
+                     + f"{ex.name_ru}{'' if (ex.free or unlocked) else ' 🔒'}",
                 callback_data=f"ex:show:{ex.slug}",
             )
         ]
@@ -890,13 +892,14 @@ async def cb_ex_group(callback: CallbackQuery) -> None:
         return
     free = sum(1 for e in items if e.free)
     restricted = await _restricted_slugs(callback.from_user.id)
+    unlocked = await subs.has_access(callback.from_user.id)
     note = "\n⚠️ — не рекомендуется при ваших ограничениях." if restricted else ""
     if callback.message:
         try:
             await callback.message.edit_text(
                 f"<b>{group}</b> — упражнений: {len(items)}, бесплатных: {free}.{note}\n"
                 "Нажмите карточку:",
-                reply_markup=_group_keyboard(group, page, restricted),
+                reply_markup=_group_keyboard(group, page, restricted, unlocked),
             )
         except Exception:  # noqa: BLE001
             logger.debug("Не удалось обновить список упражнений группы %s", group)
