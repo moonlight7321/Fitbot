@@ -277,7 +277,8 @@ function renderEditor(data) {
 
   return ''
     + '<div class="card"><h2>Редактор тренировки</h2>'
-    + '<p class="muted">Нажмите на название, чтобы заменить упражнение. Подходы и повторения — в списках.</p>'
+    + '<p class="muted">Заполните, как прошла тренировка: подходы, повторения и вес — '
+    + 'это нужно для учёта прогресса. Нажмите на название, чтобы заменить упражнение.</p>'
     + '<div id="ed-rows">' + rows + '</div>'
     + '<div id="ed-alt" class="hidden"></div>'
     + '<div class="input-row" style="margin-top:8px">'
@@ -286,6 +287,17 @@ function renderEditor(data) {
     + '<div class="input-row" style="margin-top:6px">'
     + '<button class="ghost" id="ed-partial">🟡 Частично</button>'
     + '<button class="ghost" id="ed-skip">😕 Не смог</button>'
+    + '</div>'
+    + '<div id="ed-part" class="hidden">'
+    + '<div class="muted" style="margin-top:10px">Отметьте упражнения, которые не получились, '
+    + 'и укажите причину — это пойдёт в учёт слабых групп.</div>'
+    + '<div id="ed-part-list" class="chips" style="margin-top:6px"></div>'
+    + '<label class="field">Причина<select id="ed-part-reason" class="select">'
+    + '<option value="reps">не хватило повторений</option>'
+    + '<option value="weight">не осилил вес</option>'
+    + '<option value="pain">дискомфорт или боль</option>'
+    + '</select></label>'
+    + '<button class="primary" id="ed-part-send" style="margin-top:8px">Отметить частично</button>'
     + '</div></div>';
 }
 
@@ -682,7 +694,32 @@ function render() {
     const skipEd = document.getElementById("ed-skip");
     if (skipEd) skipEd.onclick = () => markEd("skip");
     const partialEd = document.getElementById("ed-partial");
-    if (partialEd) partialEd.onclick = () => markEd("partial");
+    if (partialEd) partialEd.onclick = () => {
+      const box = document.getElementById("ed-part");
+      const list = document.getElementById("ed-part-list");
+      list.innerHTML = ed.items.map(item =>
+        '<label class="chk"><input type="checkbox" value="' + esc(item.slug) + '"> '
+        + esc(item.name) + '</label>').join('');
+      box.classList.remove("hidden");
+
+      document.getElementById("ed-part-send").onclick = async () => {
+        const slugs = Array.from(list.querySelectorAll("input:checked")).map(input => input.value);
+        if (!slugs.length) { toast("Отметьте хотя бы одно упражнение"); return; }
+        try {
+          await api("/api/checks", {
+            method: "POST",
+            body: JSON.stringify({
+              day_index: ed.dayIndex,
+              status: "partial",
+              slugs: slugs,
+              reason: document.getElementById("ed-part-reason").value,
+            }),
+          });
+          toast("Отмечено как частичное");
+          await loadOverview();
+        } catch (e) { toast(e.message || "Не удалось отметить"); }
+      };
+    };
   }
 
   if (state.tab === "plan" && data.plan && data.plan.days.length) {
