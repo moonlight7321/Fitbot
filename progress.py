@@ -212,19 +212,23 @@ def _checks_sync(user_id: int, week: int):
             "SELECT day_index, done FROM workout_checks WHERE user_id = ? AND week = ?",
             (user_id, week),
         ).fetchall()
-        return {int(r["day_index"]): bool(r["done"]) for r in rows}
+        return {int(r["day_index"]): int(r["done"]) for r in rows}
     finally:
         conn.close()
 
 
-def _set_check_sync(user_id: int, week: int, day_index: int, done: bool) -> None:
+def _set_check_sync(user_id: int, week: int, day_index: int, done) -> None:
+    # 0 — пропуск, 1 — выполнено, 2 — частично
+    value = int(done)
+    if value not in (0, 1, 2):
+        value = 1 if value else 0
     conn = _open()
     try:
         conn.execute(
             """INSERT INTO workout_checks (user_id, week, day_index, done, created_at)
                VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(user_id, week, day_index) DO UPDATE SET done = excluded.done""",
-            (user_id, week, day_index, 1 if done else 0,
+            (user_id, week, day_index, value,
              datetime.now(TIMEZONE).strftime("%Y-%m-%dT%H:%M:%S")),
         )
         conn.commit()
@@ -289,7 +293,7 @@ async def week_done_days(user_id: int, start) -> set:
     return await asyncio.to_thread(_week_done_days_sync, user_id, start)
 
 
-async def set_check(user_id: int, week: int, day_index: int, done: bool) -> None:
+async def set_check(user_id: int, week: int, day_index: int, done) -> None:
     await asyncio.to_thread(_set_check_sync, user_id, week, day_index, done)
 
 
@@ -301,8 +305,9 @@ def _deload_reasons(week: int, checks: dict, done_days: set, planned: int) -> li
     reasons = []
     if week % 4 == 0 and week > 0:
         reasons.append("плановая разгрузка")
-    # Пропуск — только день, который отмечен «не смог» и не записан в журнале
-    misses = [day for day, done in checks.items() if not done and day not in done_days]
+    # Пропуск — только день, отмеченный «не смог» (0) и отсутствующий в журнале.
+    # Частичное выполнение (2) пропуском не считается.
+    misses = [day for day, value in checks.items() if value == 0 and day not in done_days]
     if len(misses) >= 2:
         reasons.append("две пропущенные тренировки")
     return reasons
@@ -314,13 +319,17 @@ async def week_state(user_id: int, planned_days: int) -> dict:
     marks = await checks(user_id, week)
     done_days = await week_done_days(user_id, start)
     reasons = _deload_reasons(week, marks, done_days, planned_days)
+    partial = [day for day, value in marks.items() if value == 2]
     return {
         "week": week,
         "start": start,
         "checks": marks,
+        "partial": partial,
         "done": len(done_days),
         "planned": planned_days,
         "deload": bool(reasons),
+        # после разгрузочной недели вес не повышаем: сначала закрепляем
+        "after_deload": week > 1 and (week - 1) % 4 == 0,
         "reasons": reasons,
     }
 
@@ -343,8 +352,13 @@ def _step_for(equipment: str) -> float:
     return 2.5
 
 
-def next_plan(goal: str, equipment: str, sets: Sequence[sqlite3.Row]) -> dict:
-    """Вес и повторения на следующую тренировку (для подстановки в план)."""
+def next_plan(goal: str, equipment: str, sets: Sequence[sqlite3.Row],
+              allow_increase: bool = True) -> dict:
+    """Вес и повторения на следующую тренировку (для подстановки в план).
+
+    allow_increase=False — не повышаем вес: так бывает после разгрузочной
+    недели и после частично выполненной тренировки.
+    """
     if not sets:
         return {"weight": 0.0, "reps": None, "bodyweight": False}
 
@@ -354,13 +368,18 @@ def next_plan(goal: str, equipment: str, sets: Sequence[sqlite3.Row]) -> dict:
     bodyweight = weight <= 0 or "свой вес" in (equipment or "").lower()
 
     if bodyweight:
+        if not allow_increase:
+            return {"weight": 0.0, "reps": best, "bodyweight": True}
         return {"weight": 0.0, "reps": best + 1, "bodyweight": True}
-    if best >= top:
+    if best >= top and allow_increase:
         return {"weight": weight + _step_for(equipment), "reps": top, "bodyweight": False}
+    if not allow_increase:
+        return {"weight": weight, "reps": max(best, top - 2), "bodyweight": False}
     return {"weight": weight, "reps": best + 1, "bodyweight": False}
 
 
-def next_advice(goal: str, equipment: str, sets: Sequence[sqlite3.Row]) -> str:
+def next_advice(goal: str, equipment: str, sets: Sequence[sqlite3.Row],
+                allow_increase: bool = True) -> str:
     """Что делать на следующей тренировке с этим упражнением."""
     if not sets:
         return "первый раз — подберите вес так, чтобы оставалось 1–2 повторения в запасе"
@@ -369,6 +388,11 @@ def next_advice(goal: str, equipment: str, sets: Sequence[sqlite3.Row]) -> str:
     weight = float(sets[-1]["weight"])
     best = max(int(s["reps"]) for s in sets)
     bodyweight = weight <= 0 or "свой вес" in (equipment or "").lower()
+
+    if not allow_increase:
+        if bodyweight:
+            return f"закрепите: {best} повторений (вес тела)"
+        return f"{weight:g} кг, закрепите результат"
 
     if bodyweight:
         if best >= top:

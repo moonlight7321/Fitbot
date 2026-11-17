@@ -101,26 +101,50 @@ function renderJournal(data) {
     + '<textarea id="wk-text" class="textarea" rows="3" '
     + 'placeholder="приседания 60x8, 60x8, 60x7&#10;отжимания 0x12, 0x10"></textarea>'
     + '<button class="primary" id="wk-save" style="margin-top:8px">Записать</button>'
+    + '<div class="muted" style="margin-top:10px">Не получилось полностью?</div>'
+    + '<div class="input-row">'
+    + '<button class="ghost" id="wk-partial">🟡 Частично</button>'
+    + '<button class="ghost" id="wk-skip">😕 Не смог</button>'
+    + '</div>'
     + '<div id="wk-result" class="muted" style="margin-top:8px"></div></div>';
+}
+
+function shortDate(iso) {
+  return iso.slice(8, 10) + '.' + iso.slice(5, 7);
 }
 
 function sparkline(series) {
   const points = series.points || [];
   if (points.length < 2) return '';
-  const w = 300, h = 90, pad = 10;
+  const w = 340, h = 120, padL = 10, padR = 10, padT = 14, padB = 28;
   const values = points.map(p => p.weight);
   const min = Math.min.apply(null, values);
   const max = Math.max.apply(null, values);
   const span = max - min || 1;
-  const step = (w - 2 * pad) / (points.length - 1);
+  const step = (w - padL - padR) / (points.length - 1);
+  const y = v => h - padB - ((v - min) / span) * (h - padT - padB);
+  const dots = points.map((p, i) => {
+    const cx = padL + i * step, cy = y(p.weight);
+    return '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="2.6" fill="#4f8cff" />';
+  }).join('');
   const coords = points.map((p, i) =>
-    (pad + i * step).toFixed(1) + ',' + (h - pad - ((p.weight - min) / span) * (h - 2 * pad)).toFixed(1)
+    (padL + i * step).toFixed(1) + ',' + y(p.weight).toFixed(1)
   ).join(' ');
+  const first = shortDate(points[0].date);
+  const last = shortDate(points[points.length - 1].date);
+  const mid = points.length >= 3 ? shortDate(points[Math.floor(points.length / 2)].date) : '';
+
   return ''
     + '<div class="chart">'
     + '<div class="muted">' + esc(series.name) + ' · ' + min + ' → ' + max + ' кг</div>'
-    + '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">'
+    + '<svg viewBox="0 0 ' + w + ' ' + h + '">'
+    + '<line x1="' + padL + '" y1="' + (h - padB) + '" x2="' + (w - padR) + '" y2="' + (h - padB)
+    + '" stroke="#2c343f" stroke-width="1" />'
     + '<polyline points="' + coords + '" fill="none" stroke="#4f8cff" stroke-width="2.5" />'
+    + dots
+    + '<text x="' + padL + '" y="' + (h - 8) + '" font-size="10" fill="#8b94a3">' + first + '</text>'
+    + (mid ? '<text x="' + (w / 2) + '" y="' + (h - 8) + '" font-size="10" fill="#8b94a3" text-anchor="middle">' + mid + '</text>' : '')
+    + '<text x="' + (w - padR) + '" y="' + (h - 8) + '" font-size="10" fill="#8b94a3" text-anchor="end">' + last + '</text>'
     + '</svg></div>';
 }
 
@@ -255,6 +279,22 @@ function render() {
         if (result.added) await loadOverview();
       } catch (e) { toast("Не получилось записать"); }
     };
+
+    const mark = async (status) => {
+      const day = document.getElementById("wk-day").value;
+      try {
+        await api("/api/checks", {
+          method: "POST",
+          body: JSON.stringify({ day_index: Number(day), status }),
+        });
+        toast(status === "partial" ? "Отмечено как частичное" : "День пропущен");
+        await loadOverview();
+      } catch (e) { toast("Не удалось отметить"); }
+    };
+    const partialButton = document.getElementById("wk-partial");
+    if (partialButton) partialButton.onclick = () => mark("partial");
+    const skipButton = document.getElementById("wk-skip");
+    if (skipButton) skipButton.onclick = () => mark("skip");
   }
 
   if (state.tab === "exercises") {

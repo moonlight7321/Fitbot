@@ -981,10 +981,16 @@ DAYS_OPTIONS = {2: "2 дня в неделю", 3: "3 дня в неделю", 4:
 MINUTES_OPTIONS = {20: "20 минут", 30: "30 минут", 45: "45 минут", 60: "60 минут"}
 
 
-async def _plan_weights(user_id: int, profile: "profiles.Profile", plan) -> dict:
+async def _plan_weights(user_id: int, profile: "profiles.Profile", plan, week=None) -> dict:
     """Рекомендованные веса по истории: подставляются прямо в план."""
+    week = week if week is not None else await progress.week_state(user_id, len(plan.days))
     weights: dict = {}
-    for day in plan.days:
+    for day_index, day in enumerate(plan.days):
+        allow = (
+            not week["deload"]
+            and not week["after_deload"]
+            and day_index not in week.get("partial", [])
+        )
         for slot in day.slots:
             slug = slot.exercise.slug
             if slug in weights:
@@ -992,7 +998,9 @@ async def _plan_weights(user_id: int, profile: "profiles.Profile", plan) -> dict
             sets = await progress.last_sets(user_id, slug)
             if not sets:
                 continue
-            step = progress.next_plan(profile.goal, slot.exercise.equipment, sets)
+            step = progress.next_plan(
+                profile.goal, slot.exercise.equipment, sets, allow_increase=allow
+            )
             weights[slug] = "вес тела" if step["bodyweight"] else f"{step['weight']:g} кг"
     return weights
 
@@ -1006,8 +1014,9 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ Записать тренировку", callback_data="wk:pick"),
-                InlineKeyboardButton(text="😕 Не смог", callback_data="wk:skip"),
+                InlineKeyboardButton(text="🟡 Частично", callback_data="wk:part"),
             ],
+            [InlineKeyboardButton(text="😕 Не смог", callback_data="wk:skip")],
             [
                 InlineKeyboardButton(text="📈 Прогресс", callback_data="wk:report"),
                 InlineKeyboardButton(text="⏰ Напоминания", callback_data="rm:menu"),
@@ -1017,8 +1026,8 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
         ]
     )
     user_id = message.from_user.id if message.from_user else message.chat.id
-    weights = await _plan_weights(user_id, profile, plan)
     week = await progress.week_state(user_id, len(plan.days))
+    weights = await _plan_weights(user_id, profile, plan, week)
     await message.answer(
         planner.render(profile, plan, weights, deload=week["deload"]), reply_markup=markup
     )
@@ -1721,6 +1730,59 @@ async def wk_skip_day(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@pay_router.callback_query(F.data == "wk:part")
+async def wk_part(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Доступно по подписке", show_alert=True)
+        return
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+
+    plan = planner.build(profile)
+    rows = [
+        [InlineKeyboardButton(text=f"День {i + 1} · {day.title}", callback_data=f"wk:part:{i}")]
+        for i, day in enumerate(plan.days)
+    ]
+    if callback.message:
+        await callback.message.answer(
+            "Какой день выполнили частично?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("wk:part:"))
+async def wk_part_day(callback: CallbackQuery) -> None:
+    try:
+        index = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный день", show_alert=True)
+        return
+    if callback.from_user is None:
+        return
+
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+    plan = planner.build(profile)
+    if index < 0 or index >= len(plan.days):
+        await callback.answer("Такого дня нет", show_alert=True)
+        return
+
+    week = await progress.week_index(callback.from_user.id)
+    await progress.set_check(callback.from_user.id, week, index, 2)
+    if callback.message:
+        await callback.message.answer(
+            f"Отметил: день {index + 1} выполнен частично.\n"
+            "Вес на следующую тренировку не повышаю — сначала закрепите результат."
+        )
+    await callback.answer()
+
+
 @pay_router.callback_query(F.data.startswith("wk:day:"))
 async def wk_day(callback: CallbackQuery, state: FSMContext) -> None:
     try:
@@ -1816,11 +1878,16 @@ async def wk_input(message: Message, state: FSMContext) -> None:
     await progress.set_check(message.from_user.id, week, index, True)
     await state.clear()
 
+    week_state = await progress.week_state(message.from_user.id, len(plan.days))
+    allow_increase = not week_state["deload"] and not week_state["after_deload"]
+
     lines = [f"<b>Записано: день {index + 1} · {day.title}</b>", ""]
     for slug in touched:
         ex = exercises.by_slug(slug)
         sets = await progress.last_sets(message.from_user.id, slug)
-        advice = progress.next_advice(profile.goal, ex.equipment if ex else "", sets)
+        advice = progress.next_advice(
+            profile.goal, ex.equipment if ex else "", sets, allow_increase=allow_increase
+        )
         lines.append(f"• {ex.name_ru if ex else slug} → {advice}")
     if errors:
         lines.append("")
@@ -2016,6 +2083,7 @@ async def _send_workout_reminders(bot: Bot) -> None:
         markup = InlineKeyboardMarkup(
             inline_keyboard=[[
                 InlineKeyboardButton(text="✅ Записать", callback_data=f"wk:day:{index}"),
+                InlineKeyboardButton(text="🟡 Частично", callback_data=f"wk:part:{index}"),
                 InlineKeyboardButton(text="😕 Не смог", callback_data=f"wk:none:{index}"),
             ]]
         )

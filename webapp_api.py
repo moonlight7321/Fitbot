@@ -129,8 +129,14 @@ async def api_overview(request: web.Request) -> web.Response:
         # План — платная функция
         if access:
             plan = planner.build(profile)
+            week = await progress.week_state(user_id, len(plan.days))
             weights = {}
-            for day in plan.days:
+            for day_index, day in enumerate(plan.days):
+                allow = (
+                    not week["deload"]
+                    and not week["after_deload"]
+                    and day_index not in week.get("partial", [])
+                )
                 for slot in day.slots:
                     slug = slot.exercise.slug
                     if slug in weights:
@@ -138,15 +144,18 @@ async def api_overview(request: web.Request) -> web.Response:
                     sets = await progress.last_sets(user_id, slug)
                     if not sets:
                         continue
-                    step = progress.next_plan(profile.goal, slot.exercise.equipment, sets)
+                    step = progress.next_plan(
+                        profile.goal, slot.exercise.equipment, sets, allow_increase=allow
+                    )
                     weights[slug] = "вес тела" if step["bodyweight"] else f"{step['weight']:g} кг"
 
-            week = await progress.week_state(user_id, len(plan.days))
             payload["week"] = {
                 "number": week["week"],
                 "done": week["done"],
                 "planned": week["planned"],
                 "deload": week["deload"],
+                "after_deload": week["after_deload"],
+                "partial": week["partial"],
                 "reasons": week["reasons"],
             }
             payload["plan"] = {
@@ -271,13 +280,18 @@ async def api_workout_add(request: web.Request) -> web.Response:
 
     await progress.add_workout(user_id, day_index, day.title, records)
 
+    week_state = await progress.week_state(user_id, len(plan.days))
+    allow_increase = not week_state["deload"] and not week_state["after_deload"]
+
     advice = []
     for slug in touched:
         ex = exercises.by_slug(slug)
         sets = await progress.last_sets(user_id, slug)
         advice.append({
             "name": ex.name_ru if ex else slug,
-            "text": progress.next_advice(profile.goal, ex.equipment if ex else "", sets),
+            "text": progress.next_advice(
+                profile.goal, ex.equipment if ex else "", sets, allow_increase=allow_increase
+            ),
         })
 
     return web.json_response({
@@ -297,7 +311,15 @@ async def api_check(request: web.Request) -> web.Response:
         day_index = int(data.get("day_index", 0))
     except (TypeError, ValueError):
         return web.json_response({"error": "bad day"}, status=400)
-    done = bool(data.get("done", False))
+    status = str(data.get("status", "")).strip()
+    if status == "partial":
+        value = 2
+    elif status == "skip":
+        value = 0
+    elif status == "done":
+        value = 1
+    else:
+        value = 1 if data.get("done") else 0
 
     profile = await profiles.get(user_id)
     if profile is None:
@@ -307,12 +329,13 @@ async def api_check(request: web.Request) -> web.Response:
         return web.json_response({"error": "bad day"}, status=400)
 
     week = await progress.week_index(user_id)
-    await progress.set_check(user_id, week, day_index, done)
+    await progress.set_check(user_id, week, day_index, value)
     state = await progress.week_state(user_id, len(plan.days))
     return web.json_response({
         "week": {
             "number": state["week"], "done": state["done"], "planned": state["planned"],
-            "deload": state["deload"], "reasons": state["reasons"],
+            "deload": state["deload"], "after_deload": state["after_deload"],
+            "partial": state["partial"], "reasons": state["reasons"],
         }
     })
 
