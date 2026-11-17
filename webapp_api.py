@@ -15,7 +15,10 @@ from typing import Optional
 from urllib.parse import parse_qs
 
 import dataclasses
+import os
 from collections import defaultdict, deque
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
@@ -155,11 +158,17 @@ async def api_overview(request: web.Request) -> web.Response:
     user_id = _user_id(request)
     assert user_id is not None
 
+    try:
+        period = int(request.query.get("period", "30"))
+    except ValueError:
+        period = 30
+    period = max(7, min(180, period))
+
     profile = await profiles.get(user_id)
     status = await subs.get_status(user_id)
     access = status.active
     rows = await diary.items(user_id) if access else []
-    diary_history = await diary.history(user_id, 14) if access else []
+    diary_history = await diary.history(user_id, period) if access else []
 
     payload = {
         "access": access,
@@ -232,7 +241,7 @@ async def api_overview(request: web.Request) -> web.Response:
                         start = planner.start_weight(profile.weight, slot.exercise)
                         if start > 0:
                             label = "≈ " + planner.format_weight(start, slot.exercise.equipment)
-                            weights[slug] = {"label": label, "reps": None}
+                            weights[slug] = {"label": label, "reps": None, "value": start}
                         continue
                     allow_group = allow and not breakdown.get(slot.exercise.group, {}).get("pain")
                     top = progress._top_reps(profile.goal)
@@ -252,6 +261,7 @@ async def api_overview(request: web.Request) -> web.Response:
                     weights[slug] = {
                         "label": planner.format_weight(step["weight"], slot.exercise.equipment),
                         "reps": None if step["bodyweight"] else step["reps"],
+                        "value": step["weight"],
                     }
 
             payload["week"] = {
@@ -277,15 +287,16 @@ async def api_overview(request: web.Request) -> web.Response:
                             {"slug": s.exercise.slug, "name": s.exercise.name_ru,
                              "sets": _adjusted_sets(s, week["deload"], pain),
                              "reps": (weights.get(s.exercise.slug) or {}).get("reps") or s.reps,
-                             "weight": (weights.get(s.exercise.slug) or {}).get("label")}
+                             "weight": (weights.get(s.exercise.slug) or {}).get("label"),
+                             "weight_value": weights.get(s.exercise.slug, {}).get("value", 0)}
                             for s in day.slots
                         ],
                     }
                     for day in plan.days
                 ],
             }
-            payload["progress"] = await _progress_payload(user_id)
-            history = await progress.history_weeks(user_id, 8)
+            payload["progress"] = await _progress_payload(user_id, period)
+            history = await progress.history_weeks(user_id, max(1, period // 7))
             payload["history"] = history
             payload["details"] = await progress.day_details(user_id, 12)
         if profile.has_body_data and profile.activity:
@@ -323,6 +334,14 @@ async def api_reminders(request: web.Request) -> web.Response:
     if profile is None:
         return web.json_response({"error": "no profile"}, status=400)
 
+    # Нельзя поставить напоминание на сегодняшнее время, которое уже прошло
+    now = datetime.now(ZoneInfo(os.getenv("TIMEZONE", "Europe/Moscow")))
+    if time_value and now.isoweekday() in days and time_value <= now.strftime("%H:%M"):
+        return web.json_response(
+            {"error": "time in past", "message": "На сегодня это время уже прошло"},
+            status=400,
+        )
+
     profile = dataclasses.replace(
         profile,
         workout_days=",".join(str(d) for d in days),
@@ -330,6 +349,69 @@ async def api_reminders(request: web.Request) -> web.Response:
     )
     await profiles.save(profile)
     return web.json_response({"ok": True})
+
+
+async def api_alternatives(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    slug = request.match_info["slug"]
+    current = exercises.by_slug(slug)
+    profile = await profiles.get(user_id)
+    if current is None or profile is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    excluded = planner.excluded_slugs(profile.limits)
+    items = [
+        {"slug": ex.slug, "name": ex.name_ru}
+        for ex in exercises.by_group(current.group)
+        if ex.slug != slug and planner._allowed(ex, profile.experience, profile.equipment, excluded)
+    ][:8]
+    return web.json_response({"items": items})
+
+
+async def api_workout_custom(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+
+    data = await request.json()
+    try:
+        day_index = int(data.get("day_index", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad day"}, status=400)
+    items = data.get("items") or []
+    if not isinstance(items, list) or not items or len(items) > 20:
+        return web.json_response({"error": "bad items"}, status=400)
+
+    profile = await profiles.get(user_id)
+    if profile is None:
+        return web.json_response({"error": "no profile"}, status=400)
+    plan = planner.build(profile)
+    if day_index < 0 or day_index >= len(plan.days):
+        return web.json_response({"error": "bad day"}, status=400)
+
+    records = []
+    for item in items:
+        slug = str(item.get("slug", ""))
+        if exercises.by_slug(slug) is None:
+            continue
+        try:
+            sets = max(1, min(10, int(item.get("sets", 3))))
+            reps = max(1, min(50, int(item.get("reps", 10))))
+            weight = max(0.0, min(500.0, float(item.get("weight", 0))))
+        except (TypeError, ValueError):
+            continue
+        for _ in range(sets):
+            records.append(progress.SetRecord(slug, weight, reps))
+
+    if not records:
+        return web.json_response({"error": "nothing to save"}, status=400)
+
+    await progress.add_workout(user_id, day_index, plan.days[day_index].title, records)
+    profile = dataclasses.replace(profile, day_cursor=(day_index + 1) % len(plan.days))
+    await profiles.save(profile)
+    return web.json_response({"ok": True, "records": len(records)})
 
 
 async def api_profile_save(request: web.Request) -> web.Response:
@@ -396,7 +478,7 @@ async def api_profile_save(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def _progress_payload(user_id: int) -> dict:
+async def _progress_payload(user_id: int, period: int = 30) -> dict:
     rows = await progress.history(user_id, 28)
     grouped: dict = {}
     for row in rows:
@@ -421,7 +503,7 @@ async def _progress_payload(user_id: int) -> dict:
     for item in items[:3]:
         if item["last"] <= 0:
             continue
-        points = await progress.series(user_id, item["slug"], 56)
+        points = await progress.series(user_id, item["slug"], max(7, period))
         series.append({
             "slug": item["slug"],
             "name": item["name"],
@@ -765,6 +847,8 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_post("/api/skip", api_skip)
     app.router.add_post("/api/profile", api_profile_save)
     app.router.add_post("/api/reminders", api_reminders)
+    app.router.add_get("/api/alternatives/{slug}", api_alternatives)
+    app.router.add_post("/api/workouts/custom", api_workout_custom)
     app.router.add_post("/api/checks", api_check)
     app.router.add_get("/api/exercise/{slug}", api_exercise)
     app.router.add_post("/api/diary/add", api_diary_add)

@@ -47,9 +47,7 @@ from aiogram.types import (
     ErrorEvent,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    LabeledPrice,
     Message,
-    PreCheckoutQuery,
 )
 
 from ai_client import AIError, DeepSeekClient, check_length, clean_post, parse_sections
@@ -2954,15 +2952,8 @@ def _sub_screen(status: "subs.Status") -> tuple:
                 "к текущей дате окончания, ничего не сгорает.</i>",
             ])
 
-    if subs.SALES_ENABLED:
-        rows.append([
-            InlineKeyboardButton(
-                text=f"Оплатить {subs.PRICE_STARS} ⭐ за {subs.SUBSCRIPTION_DAYS} дней",
-                callback_data="sub:pay",
-            )
-        ])
-    elif not manual:
-        lines.extend(["", "<i>Оплата откроется вместе с запуском платных функций.</i>"])
+    if not manual:
+        lines.extend(["", "<i>Оплата пока недоступна — реквизиты не заданы.</i>"])
 
     markup = InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
     return "\n".join(lines), markup
@@ -2996,66 +2987,6 @@ async def cb_sub_trial(callback: CallbackQuery) -> None:
             await callback.message.edit_text(text, reply_markup=markup)
         except Exception:  # noqa: BLE001 — сообщение могло устареть
             logger.debug("Не удалось обновить экран подписки")
-
-
-@pay_router.callback_query(F.data == "sub:pay")
-async def cb_sub_pay(callback: CallbackQuery) -> None:
-    if not subs.SALES_ENABLED:
-        await callback.answer("Оплата ещё не включена", show_alert=True)
-        return
-
-    user_id = callback.from_user.id
-    chat_id = callback.message.chat.id if callback.message else user_id
-    try:
-        await callback.bot.send_invoice(
-            chat_id=chat_id,
-            title=f"Доступ на {subs.SUBSCRIPTION_DAYS} дней",
-            description="Планы тренировок, питание и техника упражнений",
-            payload=f"sub:{user_id}:{subs.SUBSCRIPTION_DAYS}",
-            provider_token="",       # цифровые товары: только Stars
-            currency="XTR",
-            prices=[LabeledPrice(label=f"{subs.SUBSCRIPTION_DAYS} дней", amount=subs.PRICE_STARS)],
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Не удалось выставить счёт на подписку")
-        await callback.answer("Не получилось выставить счёт, попробуйте позже", show_alert=True)
-        return
-    await callback.answer()
-
-
-@pay_router.pre_checkout_query()
-async def on_pre_checkout(query: PreCheckoutQuery) -> None:
-    """Подтверждение обязательно: без него оплата зависает."""
-    await query.answer(ok=True)
-
-
-@pay_router.message(F.successful_payment)
-async def on_successful_payment(message: Message) -> None:
-    payment = message.successful_payment
-    days = subs.SUBSCRIPTION_DAYS
-
-    payload = payment.invoice_payload or ""
-    parts = payload.split(":")
-    if len(parts) == 3 and parts[0] == "sub":
-        try:
-            days = int(parts[2])
-        except ValueError:
-            logger.warning("Непонятный payload платежа: %r", payload)
-
-    status = await subs.add_paid_days(
-        user_id=message.from_user.id,
-        days=days,
-        charge_id=payment.telegram_payment_charge_id,
-        amount=payment.total_amount,
-    )
-
-    until = status.paid_until.strftime("%d.%m.%Y") if status.paid_until else "—"
-    await message.answer(f"Оплата прошла ✅ Доступ активен до {until}.")
-    await _send_db_backup(message.bot, "Бэкап после оплаты Stars")
-    logger.info(
-        "Оплата: user=%s, %s ⭐, charge=%s, доступ до %s",
-        message.from_user.id, payment.total_amount, payment.telegram_payment_charge_id, until,
-    )
 
 
 # ---------------------------------------------------------------------------

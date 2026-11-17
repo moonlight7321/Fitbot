@@ -1,7 +1,7 @@
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
 
-const state = { overview: null, exercises: null, tab: "plan" };
+const state = { overview: null, exercises: null, tab: "plan", period: 30 };
 
 function headers() {
   return {
@@ -12,7 +12,14 @@ function headers() {
 
 async function api(path, options = {}) {
   const response = await fetch(path, { headers: headers(), ...options });
-  if (!response.ok) throw new Error("HTTP " + response.status);
+  if (!response.ok) {
+    let message = "HTTP " + response.status;
+    try {
+      const data = await response.json();
+      if (data && (data.message || data.error)) message = data.message || data.error;
+    } catch (e) { /* тело не JSON */ }
+    throw new Error(message);
+  }
   return response.json();
 }
 
@@ -39,7 +46,7 @@ function setStatus(sub) {
 }
 
 async function loadOverview() {
-  state.overview = await api("/api/overview");
+  state.overview = await api("/api/overview?period=" + state.period);
   setStatus(state.overview.subscription);
   render();
 }
@@ -160,8 +167,47 @@ function renderPlan(data) {
     + '<p class="muted">Это ориентир, а не назначение.</p>'
     + '</div></div>'
     + renderJournal(data)
+    + renderEditor(data)
     + renderProgress(data)
     + '<div class="card"><p class="muted">' + esc(data.plan.note) + '</p></div>';
+}
+
+function repsFromRange(reps) {
+  const text = String(reps || "10").replace(/[^0-9–-]/g, "");
+  const parts = text.split(/[–-]/);
+  return Number(parts[parts.length - 1]) || 10;
+}
+
+function renderEditor(data) {
+  if (!data.plan || !data.plan.days.length) return '';
+  const index = (data.next_day === undefined || data.next_day === null) ? 0 : data.next_day;
+  const day = data.plan.days[index];
+  const items = day.slots.map(slot => ({
+    slug: slot.slug,
+    name: slot.name,
+    sets: slot.sets,
+    reps: repsFromRange(slot.reps),
+    weight: slot.weight_value || 0,
+  }));
+  state.editor = { dayIndex: index, items: items };
+
+  const rows = items.map((item, i) =>
+    '<div class="ed-row">'
+    + '<button class="ex" data-ed-name="' + i + '">' + esc(item.name) + '</button>'
+    + '<select class="select ed-num" data-ed-sets="' + i + '">'
+    + [1, 2, 3, 4, 5, 6].map(n => '<option value="' + n + '"' + (n === item.sets ? ' selected' : '') + '>' + n + ' подх.</option>').join('')
+    + '</select>'
+    + '<select class="select ed-num" data-ed-reps="' + i + '">'
+    + [6, 8, 10, 12, 15, 20].map(n => '<option value="' + n + '"' + (n === item.reps ? ' selected' : '') + '>' + n + ' раз</option>').join('')
+    + '</select>'
+    + '</div>').join('');
+
+  return ''
+    + '<div class="card"><h2>Редактор тренировки</h2>'
+    + '<p class="muted">Нажмите на название, чтобы заменить упражнение. Подходы и повторения — в списках.</p>'
+    + '<div id="ed-rows">' + rows + '</div>'
+    + '<div id="ed-alt" class="hidden"></div>'
+    + '<button class="primary" id="ed-save" style="margin-top:8px">Записать тренировку</button></div>';
 }
 
 function renderJournal(data) {
@@ -396,7 +442,12 @@ function renderProgressTab(data) {
     '<button class="tab' + (reminders.days.indexOf(d) >= 0 ? ' active' : '') + '" data-rem-day="'
     + d + '">' + ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][d - 1] + '</button>').join('');
 
+  const periods = [7, 30, 90].map(d =>
+    '<button class="tab' + (state.period === d ? ' active' : '') + '" data-period="' + d + '">'
+    + d + ' дн.</button>').join('');
+
   return ''
+    + '<div class="card"><div class="input-row">' + periods + '</div></div>'
     + '<div class="card"><h2>Прогресс</h2>'
     + '<div class="muted">Тренировок: ' + (data.progress ? data.progress.count : 0)
     + ' · стаж ' + history.experience + ' нед.'
@@ -483,6 +534,50 @@ function render() {
         toast("Анкета сохранена");
         await loadOverview();
       } catch (e) { toast("Проверьте цифры: рост 100–250, вес 30–250"); }
+    };
+  }
+
+  if (state.tab === "plan" && state.editor) {
+    const ed = state.editor;
+    document.querySelectorAll("[data-ed-sets]").forEach(sel => {
+      sel.onchange = () => { ed.items[Number(sel.dataset.edSets)].sets = Number(sel.value); };
+    });
+    document.querySelectorAll("[data-ed-reps]").forEach(sel => {
+      sel.onchange = () => { ed.items[Number(sel.dataset.edReps)].reps = Number(sel.value); };
+    });
+    document.querySelectorAll("[data-ed-name]").forEach(btn => {
+      btn.onclick = async () => {
+        const i = Number(btn.dataset.edName);
+        try {
+          const res = await api("/api/alternatives/" + encodeURIComponent(ed.items[i].slug));
+          const box = document.getElementById("ed-alt");
+          box.classList.remove("hidden");
+          box.innerHTML = '<div class="muted">Заменить «' + esc(ed.items[i].name) + '»:</div>'
+            + res.items.map(item => '<button class="ex" data-alt="' + esc(item.slug)
+                + '" data-i="' + i + '">' + esc(item.name) + '</button>').join('');
+          box.querySelectorAll("[data-alt]").forEach(altBtn => {
+            altBtn.onclick = () => {
+              const item = ed.items[Number(altBtn.dataset.i)];
+              item.slug = altBtn.dataset.alt;
+              item.name = altBtn.textContent;
+              item.weight = 0;
+              btn.textContent = item.name;
+              box.classList.add("hidden");
+            };
+          });
+        } catch (e) { toast("Не удалось получить замены"); }
+      };
+    });
+    const saveEd = document.getElementById("ed-save");
+    if (saveEd) saveEd.onclick = async () => {
+      try {
+        await api("/api/workouts/custom", {
+          method: "POST",
+          body: JSON.stringify({ day_index: ed.dayIndex, items: ed.items }),
+        });
+        toast("Тренировка записана");
+        await loadOverview();
+      } catch (e) { toast("Не удалось записать"); }
     };
   }
 
@@ -613,6 +708,15 @@ function render() {
     if (skipButton) skipButton.onclick = () => mark("skip");
   }
 
+  if (state.tab === "progress") {
+    document.querySelectorAll("[data-period]").forEach(btn => {
+      btn.onclick = async () => {
+        state.period = Number(btn.dataset.period);
+        await loadOverview();
+      };
+    });
+  }
+
   if (state.tab === "progress" && data.access) {
     const selected = new Set((data.reminders && data.reminders.days) || []);
     document.querySelectorAll("[data-rem-day]").forEach(btn => {
@@ -635,7 +739,7 @@ function render() {
         });
         toast("Напоминания сохранены");
         await loadOverview();
-      } catch (e) { toast("Не удалось сохранить"); }
+      } catch (e) { toast(e.message || "Не удалось сохранить"); }
     };
   }
 
