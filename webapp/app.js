@@ -93,12 +93,16 @@ function renderJournal(data) {
   if (!data.plan || !data.plan.days.length) return '';
   const options = data.plan.days.map((day, i) =>
     '<option value="' + i + '">День ' + (i + 1) + ' · ' + esc(day.title) + '</option>').join('');
+  const hasWeights = data.plan.days.some(day => day.slots.some(s => s.weight));
+  const weightsHint = hasWeights
+    ? ' Вписывать упражнения нужно только когда что-то не получилось.'
+    : ' После первой тренировки укажите рабочие веса — без цифр бот не сможет '
+      + 'подсказывать прогрессию. Для гантелей — вес одной гантели.';
+
   return ''
     + '<div class="card"><h2>Записать тренировку</h2>'
-    + '<p class="muted">Если сделали всё по плану — просто нажмите «Всё выполнил». '
-    + 'Вписывать упражнения нужно только когда что-то не получилось. '
-    + 'После первой тренировки укажите рабочие веса — без цифр бот не сможет '
-    + 'подсказывать прогрессию. Для гантелей — вес одной гантели.</p>'
+    + '<p class="muted">Если сделали всё по плану — просто нажмите «Всё выполнил».'
+    + weightsHint + '</p>'
     + '<select id="wk-day" class="select">' + options + '</select>'
     + '<textarea id="wk-text" class="textarea" rows="3" '
     + 'placeholder="приседания 60x8, 60x8, 60x7&#10;отжимания 0x12, 0x10"></textarea>'
@@ -123,6 +127,13 @@ function renderJournal(data) {
     + '</select>'
     + '<button class="primary" id="part-send" style="margin-top:8px">Отметить частично</button>'
     + '</div>'
+    + '<div id="feel-box" class="hidden">'
+    + '<div class="muted" style="margin-top:10px">Как прошло? Это подскажет, повышать ли вес:</div>'
+    + '<div class="input-row">'
+    + '<button class="ghost" data-feel="easy">😌 Легко</button>'
+    + '<button class="ghost" data-feel="normal">🙂 Нормально</button>'
+    + '<button class="ghost" data-feel="hard">😮‍💨 Тяжело</button>'
+    + '</div></div>'
     + '<div id="wk-result" class="muted" style="margin-top:8px"></div></div>';
 }
 
@@ -311,7 +322,22 @@ function render() {
           method: "POST",
           body: JSON.stringify({ day_index: Number(day) }),
         });
-        toast("День записан. Укажите веса в «✍️ Детали», чтобы работала прогрессия");
+        const feelBox = document.getElementById("feel-box");
+        if (feelBox) {
+          feelBox.classList.remove("hidden");
+          feelBox.querySelectorAll("[data-feel]").forEach(btn => {
+            btn.onclick = async () => {
+              try {
+                await api("/api/feel", {
+                  method: "POST",
+                  body: JSON.stringify({ day_index: Number(day), feel: btn.dataset.feel }),
+                });
+                toast("Отмечено. Вес учту на следующей тренировке");
+                await loadOverview();
+              } catch (e) { toast("Не удалось сохранить оценку"); }
+            };
+          });
+        }
         await loadOverview();
       } catch (e) { toast("Не получилось записать"); }
     };

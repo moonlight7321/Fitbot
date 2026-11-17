@@ -192,6 +192,7 @@ async def api_overview(request: web.Request) -> web.Response:
             week = await progress.week_state(user_id, len(plan.days))
             breakdown = await progress.breakdown(user_id)
             pain = {group for group, reasons in breakdown.items() if reasons.get("pain")}
+            feels = await progress.feelings(user_id, week["week"])
             weights = {}
             for day_index, day in enumerate(plan.days):
                 allow = (
@@ -199,6 +200,7 @@ async def api_overview(request: web.Request) -> web.Response:
                     and not week["after_deload"]
                     and day_index not in week.get("partial", [])
                 )
+                feel = feels.get(day_index)
                 for slot in day.slots:
                     slug = slot.exercise.slug
                     if slug in weights:
@@ -206,8 +208,20 @@ async def api_overview(request: web.Request) -> web.Response:
                     sets = await progress.last_sets(user_id, slug)
                     if not sets:
                         continue
+                    allow_group = allow and not breakdown.get(slot.exercise.group, {}).get("pain")
+                    top = progress._top_reps(profile.goal)
+                    best = max(int(x["reps"]) for x in sets)
+                    last_weight = float(sets[-1]["weight"])
+                    rule_sets = sets
+                    if feel == "easy":
+                        rule_sets = [{"weight": last_weight, "reps": top}]
+                    elif feel == "normal":
+                        rule_sets = [{"weight": last_weight, "reps": min(top, best + 1)}]
+                    elif feel == "hard":
+                        allow_group = False
                     step = progress.next_plan(
-                        profile.goal, slot.exercise.equipment, sets, allow_increase=allow
+                        profile.goal, slot.exercise.equipment, rule_sets,
+                        allow_increase=allow_group,
                     )
                     weights[slug] = {
                         "label": planner.format_weight(step["weight"], slot.exercise.equipment),
@@ -310,6 +324,33 @@ async def api_progress(request: web.Request) -> web.Response:
     if not await subs.has_access(user_id):
         return web.json_response({"error": "subscription required"}, status=403)
     return web.json_response(await _progress_payload(user_id))
+
+
+async def api_feel(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+
+    data = await request.json()
+    feel = str(data.get("feel", ""))
+    if feel not in ("easy", "normal", "hard"):
+        return web.json_response({"error": "bad feel"}, status=400)
+    try:
+        day_index = int(data.get("day_index", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad day"}, status=400)
+
+    profile = await profiles.get(user_id)
+    if profile is None:
+        return web.json_response({"error": "no profile"}, status=400)
+    plan = planner.build(profile)
+    if day_index < 0 or day_index >= len(plan.days):
+        return web.json_response({"error": "bad day"}, status=400)
+
+    week = await progress.week_index(user_id)
+    await progress.set_feel(user_id, week, day_index, feel)
+    return web.json_response({"ok": True})
 
 
 async def api_workout_complete(request: web.Request) -> web.Response:
@@ -566,6 +607,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_get("/api/progress", api_progress)
     app.router.add_post("/api/workouts", api_workout_add)
     app.router.add_post("/api/workouts/complete", api_workout_complete)
+    app.router.add_post("/api/feel", api_feel)
     app.router.add_post("/api/checks", api_check)
     app.router.add_get("/api/exercise/{slug}", api_exercise)
     app.router.add_post("/api/diary/add", api_diary_add)

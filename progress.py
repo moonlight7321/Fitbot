@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS workout_checks (
     week       INTEGER NOT NULL,
     day_index  INTEGER NOT NULL,
     done       INTEGER NOT NULL,
+    feel       TEXT DEFAULT '',
     created_at TEXT NOT NULL,
     UNIQUE (user_id, week, day_index)
 );
@@ -81,6 +82,10 @@ def _open() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.executescript(_SCHEMA)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(workout_checks)").fetchall()}
+    if "feel" not in columns:
+        conn.execute("ALTER TABLE workout_checks ADD COLUMN feel TEXT DEFAULT ''")
+        conn.commit()
     return conn
 
 
@@ -273,6 +278,33 @@ def _failures_sync(user_id: int, days: int):
             "WHERE user_id = ? AND created_at >= ?",
             (user_id, since),
         ).fetchall()
+    finally:
+        conn.close()
+
+
+def _set_feel_sync(user_id: int, week: int, day_index: int, feel: str) -> None:
+    conn = _open()
+    try:
+        conn.execute(
+            """INSERT INTO workout_checks (user_id, week, day_index, done, feel, created_at)
+               VALUES (?, ?, ?, 1, ?, ?)
+               ON CONFLICT(user_id, week, day_index) DO UPDATE SET feel = excluded.feel""",
+            (user_id, week, day_index, feel,
+             datetime.now(TIMEZONE).strftime("%Y-%m-%dT%H:%M:%S")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _feelings_sync(user_id: int, week: int) -> dict:
+    conn = _open()
+    try:
+        rows = conn.execute(
+            "SELECT day_index, feel FROM workout_checks WHERE user_id = ? AND week = ? AND feel != ''",
+            (user_id, week),
+        ).fetchall()
+        return {int(r["day_index"]): r["feel"] for r in rows}
     finally:
         conn.close()
 
@@ -500,6 +532,14 @@ async def week_index(user_id: int) -> int:
 
 async def week_bounds(user_id: int):
     return await asyncio.to_thread(_week_bounds_sync, user_id)
+
+
+async def set_feel(user_id: int, week: int, day_index: int, feel: str) -> None:
+    await asyncio.to_thread(_set_feel_sync, user_id, week, day_index, feel)
+
+
+async def feelings(user_id: int, week: int) -> dict:
+    return await asyncio.to_thread(_feelings_sync, user_id, week)
 
 
 async def checks(user_id: int, week: int) -> dict:

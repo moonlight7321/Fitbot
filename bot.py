@@ -985,6 +985,7 @@ async def _plan_weights(user_id: int, profile: "profiles.Profile", plan, week=No
     """Рекомендованные веса по истории: подставляются прямо в план."""
     week = week if week is not None else await progress.week_state(user_id, len(plan.days))
     breakdown = await progress.breakdown(user_id)
+    feels = await progress.feelings(user_id, week["week"])
     weights: dict = {}
     for day_index, day in enumerate(plan.days):
         allow = (
@@ -992,6 +993,7 @@ async def _plan_weights(user_id: int, profile: "profiles.Profile", plan, week=No
             and not week["after_deload"]
             and day_index not in week.get("partial", [])
         )
+        feel = feels.get(day_index)
         for slot in day.slots:
             slug = slot.exercise.slug
             if slug in weights:
@@ -1001,8 +1003,19 @@ async def _plan_weights(user_id: int, profile: "profiles.Profile", plan, week=No
                 continue
             reasons = breakdown.get(slot.exercise.group, {})
             allow_group = allow and not reasons.get("pain")
+            top = progress._top_reps(profile.goal)
+            best = max(int(s["reps"]) for s in sets)
+            last_weight = float(sets[-1]["weight"])
+            rule_sets = sets
+            if feel == "easy":
+                # «легко» — считаем, что верхняя граница достигнута
+                rule_sets = [{"weight": last_weight, "reps": top}]
+            elif feel == "normal":
+                rule_sets = [{"weight": last_weight, "reps": min(top, best + 1)}]
+            elif feel == "hard":
+                allow_group = False
             step = progress.next_plan(
-                profile.goal, slot.exercise.equipment, sets, allow_increase=allow_group
+                profile.goal, slot.exercise.equipment, rule_sets, allow_increase=allow_group
             )
             weight = step["weight"]
             # две неудачи именно по весу — временно снижаем нагрузку
@@ -2099,15 +2112,60 @@ async def wk_done(callback: CallbackQuery, state: FSMContext) -> None:
     await progress.add_workout(callback.from_user.id, index, day.title, [])
     await state.clear()
 
+    # Есть ли уже история весов по упражнениям этого дня
+    has_history = False
+    for slot in day.slots:
+        if await progress.last_sets(callback.from_user.id, slot.exercise.slug):
+            has_history = True
+            break
+
+    feel_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="😌 Легко", callback_data=f"feel:{index}:easy"),
+        InlineKeyboardButton(text="🙂 Нормально", callback_data=f"feel:{index}:normal"),
+        InlineKeyboardButton(text="😮‍💨 Тяжело", callback_data=f"feel:{index}:hard"),
+    ]])
+
     if callback.message:
-        await callback.message.answer(
-            f"Записал: день {index + 1} · {day.title} выполнен полностью.\n\n"
-            "Чтобы бот подсказывал вес на следующую тренировку, один раз впишите, "
-            "с какими весами работали — кнопка «✍️ Детали» в плане. "
-            "Для гантелей — вес одной гантели.\n"
-            "Если что-то не получилось — отметьте «🟡 Частично», вес тогда не повысится."
-        )
+        text = f"Записал: день {index + 1} · {day.title} выполнен полностью.\n"
+        if not has_history:
+            text += (
+                "\nЧтобы бот подсказывал вес, один раз впишите, с какими весами "
+                "работали — «✍️ Детали» в плане. Для гантелей — вес одной гантели."
+            )
+        text += "\n\nКак прошло? Это подскажет, повышать ли вес."
+        await callback.message.answer(text, reply_markup=feel_kb)
     await callback.answer("Записано")
+
+
+@pay_router.callback_query(F.data.startswith("feel:"))
+async def feel_apply(callback: CallbackQuery) -> None:
+    try:
+        _, raw_index, feel = (callback.data or "").split(":")
+        index = int(raw_index)
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные", show_alert=True)
+        return
+    if feel not in ("easy", "normal", "hard"):
+        await callback.answer("Неизвестная оценка", show_alert=True)
+        return
+    if callback.from_user is None:
+        return
+
+    week = await progress.week_index(callback.from_user.id)
+    await progress.set_feel(callback.from_user.id, week, index, feel)
+
+    answer = {
+        "easy": "Отметил «легко» — вес на следующей тренировке поднимется.",
+        "normal": "Отметил «нормально» — вес оставлю, добавлю повторение.",
+        "hard": "Отметил «тяжело» — вес не повышаю, сначала закрепим.",
+    }[feel]
+    if callback.message:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:  # noqa: BLE001
+            pass
+        await callback.message.answer(answer)
+    await callback.answer()
 
 
 @pay_router.callback_query(F.data.startswith("wk:day:"))
