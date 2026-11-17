@@ -2516,6 +2516,8 @@ async def ed_save(callback: CallbackQuery, state: FSMContext) -> None:
         if original:
             await progress.add_replacement(callback.from_user.id, index, original, slug)
         weight = float(item.get("weight", 0))
+        if weight <= 0 and "свой вес" not in (ex.equipment or "").lower():
+            weight = planner.start_weight(profile.weight, ex)
         reps = int(item.get("reps", progress._top_reps(profile.goal)))
         for _ in range(int(item.get("sets", 1))):
             records.append(progress.SetRecord(slug, weight, reps))

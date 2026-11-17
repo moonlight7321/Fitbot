@@ -433,6 +433,11 @@ async def api_workout_custom(request: web.Request) -> web.Response:
         except (TypeError, ValueError):
             continue
 
+        # Если вес не указан для снаряда, подставляем стартовый ориентир:
+        # иначе ноль в журнале будет читаться как «свой вес» и прогрессия сломается
+        if weight <= 0 and "свой вес" not in (exercise.equipment or "").lower():
+            weight = planner.start_weight(profile.weight, exercise)
+
         cap = _weight_cap(exercise)
         if weight > cap:
             return web.json_response(
