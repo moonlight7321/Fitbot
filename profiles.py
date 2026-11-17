@@ -175,9 +175,10 @@ def _get_sync(user_id: int) -> Optional[Profile]:
         repl_conn = _open()
         try:
             for item in repl_conn.execute(
-                "SELECT original, replacement FROM replacements WHERE user_id = ?", (user_id,)
+                "SELECT day_index, original, replacement FROM day_replacements WHERE user_id = ?",
+                (user_id,),
             ).fetchall():
-                replacements[item["original"]] = item["replacement"]
+                replacements.setdefault(int(item["day_index"]), {})[item["original"]] = item["replacement"]
         finally:
             repl_conn.close()
     except sqlite3.Error:

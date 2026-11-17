@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS workout_sets (
     weight     REAL NOT NULL,
     reps       INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS day_replacements (
+    user_id     INTEGER NOT NULL,
+    day_index   INTEGER NOT NULL,
+    original    TEXT NOT NULL,
+    replacement TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (user_id, day_index, original)
+);
 CREATE TABLE IF NOT EXISTS replacements (
     user_id    INTEGER NOT NULL,
     original   TEXT NOT NULL,
@@ -504,26 +512,33 @@ async def day_details(user_id: int, limit: int = 10, offset: int = 0) -> list:
 
 
 def _replacements_sync(user_id: int) -> dict:
+    """Замены по дням: {day_index: {original: replacement}}."""
     conn = _open()
     try:
         rows = conn.execute(
-            "SELECT original, replacement FROM replacements WHERE user_id = ?", (user_id,)
+            "SELECT day_index, original, replacement FROM day_replacements WHERE user_id = ?",
+            (user_id,),
         ).fetchall()
-        return {row["original"]: row["replacement"] for row in rows}
     finally:
         conn.close()
 
+    result: dict = {}
+    for row in rows:
+        result.setdefault(int(row["day_index"]), {})[row["original"]] = row["replacement"]
+    return result
 
-def _add_replacement_sync(user_id: int, original: str, replacement: str) -> None:
+
+def _add_replacement_sync(user_id: int, day_index: int, original: str, replacement: str) -> None:
     if not original or original == replacement:
         return
     conn = _open()
     try:
         conn.execute(
-            """INSERT INTO replacements (user_id, original, replacement, created_at)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(user_id, original) DO UPDATE SET replacement = excluded.replacement""",
-            (user_id, original, replacement,
+            """INSERT INTO day_replacements (user_id, day_index, original, replacement, created_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, day_index, original)
+               DO UPDATE SET replacement = excluded.replacement""",
+            (user_id, day_index, original, replacement,
              datetime.now(TIMEZONE).strftime("%Y-%m-%dT%H:%M:%S")),
         )
         conn.commit()
@@ -535,8 +550,8 @@ async def replacements(user_id: int) -> dict:
     return await asyncio.to_thread(_replacements_sync, user_id)
 
 
-async def add_replacement(user_id: int, original: str, replacement: str) -> None:
-    await asyncio.to_thread(_add_replacement_sync, user_id, original, replacement)
+async def add_replacement(user_id: int, day_index: int, original: str, replacement: str) -> None:
+    await asyncio.to_thread(_add_replacement_sync, user_id, day_index, original, replacement)
 
 
 async def build_plan(profile, user_id: int):

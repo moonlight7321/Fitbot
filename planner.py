@@ -177,9 +177,13 @@ def build(profile: "prof.Profile", replacements: dict | None = None) -> Plan:
     # Сохранённые замены: человек заменил упражнение — предлагаем замену и дальше
     replacements = replacements or getattr(profile, "replacements", None)
     if replacements:
-        for day in days:
+        per_day = any(isinstance(key, int) for key in replacements)
+        for day_index, day in enumerate(days):
+            day_map = replacements.get(day_index, {}) if per_day else replacements
+            if not day_map:
+                continue
             for slot in day.slots:
-                new_slug = replacements.get(slot.exercise.slug)
+                new_slug = day_map.get(slot.exercise.slug)
                 if not new_slug:
                     continue
                 replacement = lib.by_slug(new_slug)

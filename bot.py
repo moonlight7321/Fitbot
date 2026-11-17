@@ -2512,6 +2512,9 @@ async def ed_save(callback: CallbackQuery, state: FSMContext) -> None:
         ex = exercises.by_slug(slug)
         if ex is None:
             continue
+        original = item.get("replaced_from")
+        if original:
+            await progress.add_replacement(callback.from_user.id, index, original, slug)
         weight = float(item.get("weight", 0))
         reps = int(item.get("reps", progress._top_reps(profile.goal)))
         for _ in range(int(item.get("sets", 1))):
