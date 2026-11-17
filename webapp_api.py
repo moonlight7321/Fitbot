@@ -173,9 +173,27 @@ async def api_overview(request: web.Request) -> web.Response:
         "calories": None,
         "diary": {"totals": diary.totals(rows), "items": rows[-20:]} if access else None,
         "progress": None,
+        "profile_raw": None,
+        "options": {
+            "goals": profiles.GOALS,
+            "experience": profiles.EXPERIENCE,
+            "equipment": profiles.EQUIPMENT,
+            "activity": profiles.ACTIVITY,
+            "limitations": profiles.LIMITATIONS,
+            "days": list(profiles.DAYS_OPTIONS),
+            "minutes": list(profiles.MINUTES_OPTIONS),
+        },
     }
 
     if profile is not None:
+        payload["profile_raw"] = {
+            "height": profile.height, "weight": profile.weight,
+            "experience": profile.experience, "days": profile.days,
+            "minutes": profile.minutes, "goal": profile.goal,
+            "equipment": profile.equipment, "activity": profile.activity,
+            "sex": profile.sex, "age": profile.age,
+            "limitations": sorted(profile.limits),
+        }
         payload["profile"] = {
             "height": profile.height,
             "weight": profile.weight,
@@ -277,6 +295,70 @@ async def api_overview(request: web.Request) -> web.Response:
             }
 
     return web.json_response(payload)
+
+
+async def api_profile_save(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    data = await request.json()
+    existing = await profiles.get(user_id)
+
+    try:
+        height = int(data.get("height", 0))
+        weight = int(data.get("weight", 0))
+        days = int(data.get("days", 0))
+        minutes = int(data.get("minutes", 0))
+        age = int(data.get("age", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad numbers"}, status=400)
+
+    if not 100 <= height <= 250:
+        return web.json_response({"error": "height"}, status=400)
+    if not 30 <= weight <= 250:
+        return web.json_response({"error": "weight"}, status=400)
+    if days not in profiles.DAYS_OPTIONS:
+        return web.json_response({"error": "days"}, status=400)
+    if minutes not in profiles.MINUTES_OPTIONS:
+        return web.json_response({"error": "minutes"}, status=400)
+    if age and not 14 <= age <= 90:
+        return web.json_response({"error": "age"}, status=400)
+
+    goal = str(data.get("goal", "tone"))
+    experience = str(data.get("experience", "novice"))
+    equipment = str(data.get("equipment", "gym"))
+    if goal not in profiles.GOALS:
+        return web.json_response({"error": "goal"}, status=400)
+    if experience not in profiles.EXPERIENCE:
+        return web.json_response({"error": "experience"}, status=400)
+    if equipment not in profiles.EQUIPMENT:
+        return web.json_response({"error": "equipment"}, status=400)
+
+    activity = str(data.get("activity", "")) or (existing.activity if existing else "")
+    if activity and activity not in profiles.ACTIVITY:
+        return web.json_response({"error": "activity"}, status=400)
+
+    sex = str(data.get("sex", "")) or (existing.sex if existing else "")
+    if sex and sex not in ("m", "f"):
+        return web.json_response({"error": "sex"}, status=400)
+
+    limits = data.get("limitations")
+    if isinstance(limits, list):
+        limitations = ",".join(str(x) for x in limits if x in profiles.LIMITATIONS)
+    else:
+        limitations = existing.limitations if existing else ""
+
+    profile = profiles.Profile(
+        user_id=user_id, height=height, weight=weight,
+        experience=experience, days=days, minutes=minutes,
+        goal=goal, equipment=equipment, limitations=limitations,
+        sex=sex, age=age, activity=activity,
+        workout_days=existing.workout_days if existing else "",
+        workout_time=existing.workout_time if existing else "",
+        last_reminder=existing.last_reminder if existing else "",
+        day_cursor=0,
+    )
+    await profiles.save(profile)
+    return web.json_response({"ok": True})
 
 
 async def _progress_payload(user_id: int) -> dict:
@@ -646,6 +728,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_post("/api/workouts/complete", api_workout_complete)
     app.router.add_post("/api/feel", api_feel)
     app.router.add_post("/api/skip", api_skip)
+    app.router.add_post("/api/profile", api_profile_save)
     app.router.add_post("/api/checks", api_check)
     app.router.add_get("/api/exercise/{slug}", api_exercise)
     app.router.add_post("/api/diary/add", api_diary_add)

@@ -49,6 +49,52 @@ async function loadExercises() {
   render();
 }
 
+function optionsHtml(map, current) {
+  return Object.keys(map || {}).map(key =>
+    '<option value="' + esc(key) + '"' + (key === current ? ' selected' : '') + '>'
+    + esc(map[key]) + '</option>').join('');
+}
+
+function numberOptions(list, current) {
+  return (list || []).map(value =>
+    '<option value="' + value + '"' + (value === current ? ' selected' : '') + '>'
+    + value + '</option>').join('');
+}
+
+function profileFormCard(data) {
+  const raw = data.profile_raw || {};
+  const opt = data.options || {};
+  const hidden = data.profile_raw ? ' hidden' : '';
+  const limits = (raw.limitations || []);
+  const limitBoxes = Object.keys(opt.limitations || {}).map(key =>
+    '<label class="chk"><input type="checkbox" value="' + esc(key) + '"'
+    + (limits.indexOf(key) >= 0 ? ' checked' : '') + '> ' + esc(opt.limitations[key]) + '</label>').join('');
+
+  return ''
+    + '<div class="card"><button class="ghost" id="profile-toggle">⚙️ Анкета и расчёт</button>'
+    + '<div id="profile-form"' + hidden + '>'
+    + '<div class="muted" style="margin-top:8px">Заполните один раз — план и калории посчитаются сразу.</div>'
+    + '<label class="field">Цель<select id="pf-goal" class="select">' + optionsHtml(opt.goals, raw.goal || 'tone') + '</select></label>'
+    + '<label class="field">Опыт<select id="pf-exp" class="select">' + optionsHtml(opt.experience, raw.experience || 'novice') + '</select></label>'
+    + '<label class="field">Инвентарь<select id="pf-eq" class="select">' + optionsHtml(opt.equipment, raw.equipment || 'gym') + '</select></label>'
+    + '<label class="field">Дней в неделю<select id="pf-days" class="select">' + numberOptions(opt.days, raw.days || 3) + '</select></label>'
+    + '<label class="field">Минут на тренировку<select id="pf-min" class="select">' + numberOptions(opt.minutes, raw.minutes || 45) + '</select></label>'
+    + '<label class="field">Активность вне зала<select id="pf-act" class="select">' + optionsHtml(opt.activity, raw.activity || 'light') + '</select></label>'
+    + '<div class="input-row">'
+    + '<label class="field" style="flex:1">Пол<select id="pf-sex" class="select">'
+    + '<option value="m"' + (raw.sex === 'm' ? ' selected' : '') + '>Мужской</option>'
+    + '<option value="f"' + (raw.sex === 'f' ? ' selected' : '') + '>Женский</option></select></label>'
+    + '<label class="field" style="flex:1">Возраст<input id="pf-age" class="select" type="number" min="14" max="90" value="' + (raw.age || 30) + '"></label>'
+    + '</div>'
+    + '<div class="input-row">'
+    + '<label class="field" style="flex:1">Рост, см<input id="pf-height" class="select" type="number" min="100" max="250" value="' + (raw.height || 175) + '"></label>'
+    + '<label class="field" style="flex:1">Вес, кг<input id="pf-weight" class="select" type="number" min="30" max="250" value="' + (raw.weight || 70) + '"></label>'
+    + '</div>'
+    + '<div class="muted" style="margin-top:8px">Ограничения:</div><div class="chips">' + limitBoxes + '</div>'
+    + '<button class="primary" id="profile-save" style="margin-top:10px">Сохранить и рассчитать</button>'
+    + '</div></div>';
+}
+
 function paywallCard(title) {
   return '<div class="card"><h2>' + title + '</h2>'
     + '<p class="muted">Доступно по подписке. Пробный период — 7 дней бесплатно, '
@@ -87,7 +133,7 @@ function renderPlan(data) {
         + (s.weight ? ' · <b>' + esc(s.weight) + '</b>' : '') + '</li>').join('') + '</ol></div>'
   ).join('');
 
-  return deload + ''
+  return profileFormCard(data) + deload + ''
     + '<div class="card"><h2>Ваш план</h2>'
     + '<div class="muted">' + esc(p.goal) + ' · ' + esc(p.experience) + ' · ' + esc(p.equipment) + '</div>'
     + '<div class="muted">' + p.days + ' тренировки в неделю по ' + p.minutes + ' минут</div>'
@@ -350,6 +396,35 @@ function render() {
     document.getElementById("clear-diary").onclick = async () => {
       try { await api("/api/diary/clear", { method: "POST", body: "{}" }); await loadOverview(); }
       catch (e) { toast("Ошибка очистки"); }
+    };
+  }
+
+  if (state.tab === "plan") {
+    const toggle = document.getElementById("profile-toggle");
+    if (toggle) toggle.onclick = () => {
+      const form = document.getElementById("profile-form");
+      if (form) form.classList.toggle("hidden");
+    };
+    const save = document.getElementById("profile-save");
+    if (save) save.onclick = async () => {
+      const value = id => document.getElementById(id).value;
+      const limits = Array.from(
+        document.querySelectorAll("#profile-form input[type=checkbox]:checked")
+      ).map(input => input.value);
+      try {
+        await api("/api/profile", {
+          method: "POST",
+          body: JSON.stringify({
+            goal: value("pf-goal"), experience: value("pf-exp"), equipment: value("pf-eq"),
+            days: Number(value("pf-days")), minutes: Number(value("pf-min")),
+            activity: value("pf-act"), sex: value("pf-sex"), age: Number(value("pf-age")),
+            height: Number(value("pf-height")), weight: Number(value("pf-weight")),
+            limitations: limits,
+          }),
+        });
+        toast("Анкета сохранена");
+        await loadOverview();
+      } catch (e) { toast("Проверьте цифры: рост 100–250, вес 30–250"); }
     };
   }
 
