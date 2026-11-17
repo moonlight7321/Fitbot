@@ -1935,7 +1935,14 @@ async def part_next(callback: CallbackQuery, state: FSMContext) -> None:
         for code, text in PARTIAL_REASONS.items()
     ])
     if callback.message:
-        await callback.message.answer("Что именно не получилось?", reply_markup=markup)
+        await callback.message.answer(
+            "Что именно не получилось?\n\n"
+            f"Выбрано упражнений: {len(selected)} — причина применится ко всем.\n"
+            "<i>Если причины разные (например, колено болит, а жим не пошёл по весу), "
+            "отметьте их отдельными заходами: каждая отметка суммируется, "
+            "и расчёт отстающих групп будет точнее.</i>",
+            reply_markup=markup,
+        )
     await callback.answer()
 
 
@@ -1970,6 +1977,9 @@ async def part_reason(callback: CallbackQuery, state: FSMContext) -> None:
         lines.append("")
         lines.append("Чаще всего не получается: "
                      + ", ".join(f"{group} ({count})" for group, count in weak[:3]))
+    lines.append("")
+    lines.append("<i>Если у других упражнений причина иная — отметьте их ещё раз, "
+                 "цифры сложатся.</i>")
     if callback.message:
         await callback.message.answer("\n".join(lines))
     await callback.answer()
