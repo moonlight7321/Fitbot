@@ -984,6 +984,7 @@ MINUTES_OPTIONS = {20: "20 минут", 30: "30 минут", 45: "45 минут"
 async def _plan_weights(user_id: int, profile: "profiles.Profile", plan, week=None) -> dict:
     """Рекомендованные веса по истории: подставляются прямо в план."""
     week = week if week is not None else await progress.week_state(user_id, len(plan.days))
+    breakdown = await progress.breakdown(user_id)
     weights: dict = {}
     for day_index, day in enumerate(plan.days):
         allow = (
@@ -998,10 +999,16 @@ async def _plan_weights(user_id: int, profile: "profiles.Profile", plan, week=No
             sets = await progress.last_sets(user_id, slug)
             if not sets:
                 continue
+            reasons = breakdown.get(slot.exercise.group, {})
+            allow_group = allow and not reasons.get("pain")
             step = progress.next_plan(
-                profile.goal, slot.exercise.equipment, sets, allow_increase=allow
+                profile.goal, slot.exercise.equipment, sets, allow_increase=allow_group
             )
-            weights[slug] = "вес тела" if step["bodyweight"] else f"{step['weight']:g} кг"
+            weight = step["weight"]
+            # две неудачи именно по весу — временно снижаем нагрузку
+            if reasons.get("weight", 0) >= 2 and weight > 0:
+                weight = max(0.0, weight - progress._step_for(slot.exercise.equipment))
+            weights[slug] = "вес тела" if step["bodyweight"] else f"{weight:g} кг"
     return weights
 
 
@@ -1032,8 +1039,11 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
     week = await progress.week_state(user_id, len(plan.days))
     weights = await _plan_weights(user_id, profile, plan, week)
     weak = {group for group, _count in await progress.weak_groups(user_id)}
+    breakdown = await progress.breakdown(user_id)
+    pain = {group for group, reasons in breakdown.items() if reasons.get("pain")}
     await message.answer(
-        planner.render(profile, plan, weights, deload=week["deload"], weak_groups=weak),
+        planner.render(profile, plan, weights, deload=week["deload"],
+                       weak_groups=weak, pain_groups=pain),
         reply_markup=markup,
     )
 
@@ -1698,6 +1708,18 @@ async def _history_text(user_id: int) -> str:
     ]
     if data["streak"]:
         lines.append(f"Серия: {data['streak']} нед. подряд")
+
+    breakdown = await progress.breakdown(user_id)
+    if breakdown:
+        names = {"reps": "не хватило повторений", "weight": "не осилил вес",
+                 "pain": "дискомфорт", "unknown": "без уточнения"}
+        lines.append("")
+        for group, reasons in list(breakdown.items())[:3]:
+            parts = ", ".join(
+                f"{names.get(reason, reason)} ×{count}" for reason, count in reasons.items()
+            )
+            lines.append(f"{group}: {parts}")
+
     lines.append("")
 
     for item in weeks:

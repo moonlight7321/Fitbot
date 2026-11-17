@@ -135,14 +135,16 @@ def _add_sync(user_id: int, day_index: int, day_title: str,
 
 
 def _last_sets_sync(user_id: int, slug: str) -> List[sqlite3.Row]:
+    anchor = _anchor_sync(user_id)
+    since = anchor.strftime("%Y-%m-%d") if anchor else "0000-00-00"
     conn = _open()
     try:
         row = conn.execute(
             """SELECT ws.* FROM workout_sets ws
                JOIN workouts w ON w.id = ws.workout_id
-               WHERE w.user_id = ? AND ws.slug = ?
+               WHERE w.user_id = ? AND ws.slug = ? AND w.done_on >= ?
                ORDER BY ws.workout_id DESC, ws.set_no ASC LIMIT 20""",
-            (user_id, slug),
+            (user_id, slug, since),
         ).fetchall()
         if not row:
             return []
@@ -178,26 +180,58 @@ def _first_date_sync(user_id: int):
         conn.close()
 
 
-def _week_index_sync(user_id: int) -> int:
-    first = _first_date_sync(user_id)
-    if not first:
-        return 1
+GAP_DAYS = 14  # пропуск 2+ недель начинает новый цикл
+
+
+def _anchor_sync(user_id: int):
+    """Дата начала текущего цикла: после разрыва в 2+ недели отсчёт начинается заново."""
+    conn = _open()
     try:
-        start = datetime.strptime(first, "%Y-%m-%d").date()
-    except ValueError:
+        rows = conn.execute(
+            "SELECT DISTINCT done_on FROM workouts WHERE user_id = ? ORDER BY done_on",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return None
+
+    dates = []
+    for row in rows:
+        try:
+            dates.append(datetime.strptime(row["done_on"], "%Y-%m-%d").date())
+        except (TypeError, ValueError):
+            continue
+    if not dates:
+        return None
+
+    anchor = dates[0]
+    for prev, current in zip(dates, dates[1:]):
+        if (current - prev).days >= GAP_DAYS:
+            anchor = current
+
+    today = datetime.now(TIMEZONE).date()
+    if (today - dates[-1]).days >= GAP_DAYS:
+        # давно не тренировался — старый цикл закрыт, начинаем с сегодня
+        anchor = today
+    return anchor
+
+
+def _week_index_sync(user_id: int) -> int:
+    anchor = _anchor_sync(user_id)
+    if anchor is None:
         return 1
     today = datetime.now(TIMEZONE).date()
-    return max(1, (today - start).days // 7 + 1)
+    return max(1, (today - anchor).days // 7 + 1)
 
 
 def _week_bounds_sync(user_id: int):
-    first = _first_date_sync(user_id)
+    anchor = _anchor_sync(user_id)
     today = datetime.now(TIMEZONE).date()
-    if not first:
+    if anchor is None:
         return 1, today - timedelta(days=6)
-    start = datetime.strptime(first, "%Y-%m-%d").date()
-    index = max(1, (today - start).days // 7 + 1)
-    return index, start + timedelta(days=7 * (index - 1))
+    index = max(1, (today - anchor).days // 7 + 1)
+    return index, anchor + timedelta(days=7 * (index - 1))
 
 
 def _week_done_days_sync(user_id: int, start) -> set:
@@ -275,7 +309,10 @@ def _set_check_sync(user_id: int, week: int, day_index: int, done) -> None:
 
 
 def _series_sync(user_id: int, slug: str, days: int):
+    anchor = _anchor_sync(user_id)
     since = (datetime.now(TIMEZONE) - timedelta(days=days)).strftime("%Y-%m-%d")
+    if anchor is not None and anchor.strftime("%Y-%m-%d") > since:
+        since = anchor.strftime("%Y-%m-%d")
     conn = _open()
     try:
         return conn.execute(
@@ -290,18 +327,19 @@ def _series_sync(user_id: int, slug: str, days: int):
 
 
 def _history_weeks_sync(user_id: int, limit: int) -> dict:
-    first = _first_date_sync(user_id)
-    if not first:
+    anchor = _anchor_sync(user_id)
+    if anchor is None:
         return {"weeks": [], "experience": 0, "total": 0, "streak": 0}
 
-    start0 = datetime.strptime(first, "%Y-%m-%d").date()
+    start0 = anchor
     today = datetime.now(TIMEZONE).date()
     current = max(1, (today - start0).days // 7 + 1)
 
     conn = _open()
     try:
         workouts = conn.execute(
-            "SELECT done_on, day_index FROM workouts WHERE user_id = ?", (user_id,)
+            "SELECT done_on, day_index FROM workouts WHERE user_id = ? AND done_on >= ?",
+            (user_id, start0.strftime("%Y-%m-%d")),
         ).fetchall()
         checks = conn.execute(
             "SELECT week, day_index, done FROM workout_checks WHERE user_id = ?", (user_id,)
@@ -406,6 +444,32 @@ async def add_failures(user_id: int, week: int, day_index: int, items) -> None:
 
 async def failures(user_id: int, days: int = 28):
     return await asyncio.to_thread(_failures_sync, user_id, days)
+
+
+def _breakdown_sync(user_id: int, days: int) -> dict:
+    import exercises as lib
+
+    result: dict = {}
+    conn = _open()
+    try:
+        since = (datetime.now(TIMEZONE) - timedelta(days=days)).strftime("%Y-%m-%d")
+        rows = conn.execute(
+            "SELECT slug, reason FROM failures WHERE user_id = ? AND created_at >= ?",
+            (user_id, since),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    for row in rows:
+        ex = lib.by_slug(row["slug"])
+        group = ex.group if ex else "Другое"
+        bucket = result.setdefault(group, {})
+        bucket[row["reason"]] = bucket.get(row["reason"], 0) + 1
+    return result
+
+
+async def breakdown(user_id: int, days: int = 28) -> dict:
+    return await asyncio.to_thread(_breakdown_sync, user_id, days)
 
 
 async def weak_groups(user_id: int, days: int = 28) -> list:

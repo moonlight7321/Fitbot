@@ -58,6 +58,7 @@ body {
 }
 .ex small { color: var(--muted); }
 .locked { opacity: .55; }
+.ex.selected { outline: 2px solid var(--accent); }
 .input-row { display: flex; gap: 8px; margin-top: 10px; }
 .select, .textarea {
   width: 100%; background: #12161b; border: 1px solid #2c343f; color: var(--text);

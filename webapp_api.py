@@ -90,6 +90,16 @@ async def telegram_auth(request: web.Request, handler):
     return await handler(request)
 
 
+def _adjusted_sets(slot, deload: bool, pain: set) -> int:
+    """Подходы с учётом разгрузки и болевых групп."""
+    sets = slot.sets
+    if deload:
+        sets = max(2, sets // 2)
+    if slot.exercise.group in pain:
+        sets = max(2, sets - 1)
+    return sets
+
+
 async def api_overview(request: web.Request) -> web.Response:
     user_id = _user_id(request)
     assert user_id is not None
@@ -130,6 +140,8 @@ async def api_overview(request: web.Request) -> web.Response:
         if access:
             plan = planner.build(profile)
             week = await progress.week_state(user_id, len(plan.days))
+            breakdown = await progress.breakdown(user_id)
+            pain = {group for group, reasons in breakdown.items() if reasons.get("pain")}
             weights = {}
             for day_index, day in enumerate(plan.days):
                 allow = (
@@ -166,7 +178,7 @@ async def api_overview(request: web.Request) -> web.Response:
                         "title": day.title,
                         "slots": [
                             {"slug": s.exercise.slug, "name": s.exercise.name_ru,
-                             "sets": max(2, s.sets // 2) if week["deload"] else s.sets,
+                             "sets": _adjusted_sets(s, week["deload"], pain),
                              "reps": s.reps, "weight": weights.get(s.exercise.slug)}
                             for s in day.slots
                         ],
@@ -225,6 +237,7 @@ async def _progress_payload(user_id: int) -> dict:
         })
 
     weak = await progress.weak_groups(user_id)
+    breakdown = await progress.breakdown(user_id)
     history = await progress.history_weeks(user_id, 8)
     return {
         "count": await progress.count(user_id),
@@ -233,6 +246,7 @@ async def _progress_payload(user_id: int) -> dict:
         "items": items[:12],
         "series": series,
         "weak_groups": [{"group": group, "count": count} for group, count in weak[:5]],
+        "breakdown": breakdown,
     }
 
 

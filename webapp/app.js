@@ -106,7 +106,22 @@ function renderJournal(data) {
     + '<button class="ghost" id="wk-partial">🟡 Частично</button>'
     + '<button class="ghost" id="wk-skip">😕 Не смог</button>'
     + '</div>'
+    + '<div id="part-box" class="hidden">'
+    + '<div class="muted" style="margin-top:10px">Отметьте упражнения, которые не получились:</div>'
+    + '<div id="part-list" class="ex-grid" style="margin-top:6px"></div>'
+    + '<select id="part-reason" class="select">'
+    + '<option value="reps">не хватило повторений</option>'
+    + '<option value="weight">не осилил вес</option>'
+    + '<option value="pain">дискомфорт или боль</option>'
+    + '</select>'
+    + '<button class="primary" id="part-send" style="margin-top:8px">Отметить частично</button>'
+    + '</div>'
     + '<div id="wk-result" class="muted" style="margin-top:8px"></div></div>';
+}
+
+function reasonLabel(reason) {
+  const names = { reps: "не хватило повторений", weight: "не осилил вес", pain: "дискомфорт" };
+  return names[reason] || "без уточнения";
 }
 
 function shortDate(iso) {
@@ -185,6 +200,10 @@ function renderProgress(data) {
         ? '<div class="muted">Отстают: ' + progress.weak_groups
             .map(w => esc(w.group) + ' (' + w.count + ')').join(', ') + '</div>'
         : '')
+    + Object.keys(progress.breakdown || {}).map(group =>
+        '<div class="muted">' + esc(group) + ': ' + Object.entries(progress.breakdown[group])
+          .map(([reason, count]) => reasonLabel(reason) + ' ×' + count).join(', ') + '</div>'
+      ).join('')
     + (items ? '<ul class="list" style="margin-top:8px">' + items + '</ul>'
              : '<p class="muted">Пока пусто — запишите первую тренировку.</p>')
     + (progress.series || []).map(sparkline).join('')
@@ -312,7 +331,40 @@ function render() {
       } catch (e) { toast("Не удалось отметить"); }
     };
     const partialButton = document.getElementById("wk-partial");
-    if (partialButton) partialButton.onclick = () => mark("partial");
+    if (partialButton) partialButton.onclick = () => {
+      const box = document.getElementById("part-box");
+      const dayIndex = Number(document.getElementById("wk-day").value);
+      const day = data.plan.days[dayIndex];
+      const list = document.getElementById("part-list");
+      const selected = new Set();
+      list.innerHTML = day.slots.map(s =>
+        '<button class="ex" data-slug="' + esc(s.slug) + '">' + esc(s.name) + '</button>').join('');
+      list.querySelectorAll(".ex").forEach(btn => {
+        btn.onclick = () => {
+          const slug = btn.dataset.slug;
+          if (selected.has(slug)) { selected.delete(slug); btn.classList.remove("selected"); }
+          else { selected.add(slug); btn.classList.add("selected"); }
+        };
+      });
+      box.classList.remove("hidden");
+      const send = document.getElementById("part-send");
+      send.onclick = async () => {
+        if (!selected.size) { toast("Отметьте хотя бы одно упражнение"); return; }
+        try {
+          await api("/api/checks", {
+            method: "POST",
+            body: JSON.stringify({
+              day_index: dayIndex,
+              status: "partial",
+              slugs: Array.from(selected),
+              reason: document.getElementById("part-reason").value,
+            }),
+          });
+          toast("Отмечено как частичное");
+          await loadOverview();
+        } catch (e) { toast("Не удалось отметить"); }
+      };
+    };
     const skipButton = document.getElementById("wk-skip");
     if (skipButton) skipButton.onclick = () => mark("skip");
   }
