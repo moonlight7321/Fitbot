@@ -130,21 +130,35 @@ function sparkline(series) {
   const coords = points.map((p, i) =>
     (padL + i * step).toFixed(1) + ',' + y(p.weight).toFixed(1)
   ).join(' ');
-  const first = shortDate(points[0].date);
-  const last = shortDate(points[points.length - 1].date);
-  const mid = points.length >= 3 ? shortDate(points[Math.floor(points.length / 2)].date) : '';
+  // До шести подписанных дат, равномерно по истории
+  const tickCount = Math.min(6, points.length);
+  const tickIndexes = [];
+  for (let k = 0; k < tickCount; k++) {
+    tickIndexes.push(Math.round(k * (points.length - 1) / Math.max(1, tickCount - 1)));
+  }
+  const uniqueTicks = tickIndexes.filter((v, i) => tickIndexes.indexOf(v) === i);
+  const grid = uniqueTicks.map(i =>
+    '<line x1="' + (padL + i * step).toFixed(1) + '" y1="' + padT + '" x2="'
+    + (padL + i * step).toFixed(1) + '" y2="' + (h - padB) + '" stroke="#232a33" stroke-width="1" />'
+  ).join('');
+  const labels = uniqueTicks.map((i, order) => {
+    const x = padL + i * step;
+    const anchor = order === 0 ? 'start' : (order === uniqueTicks.length - 1 ? 'end' : 'middle');
+    return '<text x="' + x.toFixed(1) + '" y="' + (h - 8) + '" font-size="10" fill="#8b94a3" text-anchor="'
+      + anchor + '">' + shortDate(points[i].date) + '</text>';
+  }).join('');
 
   return ''
     + '<div class="chart">'
-    + '<div class="muted">' + esc(series.name) + ' · ' + min + ' → ' + max + ' кг</div>'
+    + '<div class="muted">' + esc(series.name) + ' · ' + min + ' → ' + max + ' кг'
+    + ' · точек: ' + points.length + '</div>'
     + '<svg viewBox="0 0 ' + w + ' ' + h + '">'
+    + grid
     + '<line x1="' + padL + '" y1="' + (h - padB) + '" x2="' + (w - padR) + '" y2="' + (h - padB)
     + '" stroke="#2c343f" stroke-width="1" />'
     + '<polyline points="' + coords + '" fill="none" stroke="#4f8cff" stroke-width="2.5" />'
     + dots
-    + '<text x="' + padL + '" y="' + (h - 8) + '" font-size="10" fill="#8b94a3">' + first + '</text>'
-    + (mid ? '<text x="' + (w / 2) + '" y="' + (h - 8) + '" font-size="10" fill="#8b94a3" text-anchor="middle">' + mid + '</text>' : '')
-    + '<text x="' + (w - padR) + '" y="' + (h - 8) + '" font-size="10" fill="#8b94a3" text-anchor="end">' + last + '</text>'
+    + labels
     + '</svg></div>';
 }
 
@@ -164,7 +178,9 @@ function renderProgress(data) {
 
   return ''
     + '<div class="card"><h2>Прогресс</h2>'
-    + '<div class="muted">Тренировок записано: ' + progress.count + '</div>'
+    + '<div class="muted">Тренировок записано: ' + progress.count
+    + (progress.experience ? ' · стаж ' + progress.experience + ' нед.' : '')
+    + (progress.streak ? ' · серия ' + progress.streak + ' нед.' : '') + '</div>'
     + ((progress.weak_groups || []).length
         ? '<div class="muted">Отстают: ' + progress.weak_groups
             .map(w => esc(w.group) + ' (' + w.count + ')').join(', ') + '</div>'

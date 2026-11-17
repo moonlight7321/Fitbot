@@ -225,8 +225,11 @@ async def _progress_payload(user_id: int) -> dict:
         })
 
     weak = await progress.weak_groups(user_id)
+    history = await progress.history_weeks(user_id, 8)
     return {
         "count": await progress.count(user_id),
+        "experience": history["experience"],
+        "streak": history["streak"],
         "items": items[:12],
         "series": series,
         "weak_groups": [{"group": group, "count": count} for group, count in weak[:5]],

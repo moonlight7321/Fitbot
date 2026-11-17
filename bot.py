@@ -1021,7 +1021,10 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
                 InlineKeyboardButton(text="📈 Прогресс", callback_data="wk:report"),
                 InlineKeyboardButton(text="⏰ Напоминания", callback_data="rm:menu"),
             ],
-            [InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit")],
+            [
+                InlineKeyboardButton(text="📅 История", callback_data="wk:history"),
+                InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit"),
+            ],
             [InlineKeyboardButton(text="🏋️ Упражнения", callback_data="ex:back")],
         ]
     )
@@ -1680,6 +1683,58 @@ async def cmd_progress(message: Message, state: FSMContext) -> None:
     if not await _ensure_access(message, message.from_user.id):
         return
     await message.answer(await _progress_report(message.from_user.id))
+
+
+async def _history_text(user_id: int) -> str:
+    data = await progress.history_weeks(user_id, 8)
+    weeks = data["weeks"]
+    if not weeks:
+        return ("<b>История</b>\n\nПока пусто: запишите первую тренировку, "
+                "и здесь появится стаж по неделям.")
+
+    lines = [
+        "<b>История</b>",
+        f"Стаж: {data['experience']} нед. · тренировок: {data['total']}",
+    ]
+    if data["streak"]:
+        lines.append(f"Серия: {data['streak']} нед. подряд")
+    lines.append("")
+
+    for item in weeks:
+        marks = []
+        if item["done"]:
+            marks.append(f"✅ {item['done']}")
+        if item["partial"]:
+            marks.append(f"🟡 {item['partial']}")
+        if item["skipped"]:
+            marks.append(f"😕 {item['skipped']}")
+        if not marks:
+            marks.append("— пусто")
+        suffix = " · разгрузка" if item["deload"] and item["week"] % 4 == 0 else ""
+        lines.append(f"Неделя {item['week']}: " + " · ".join(marks) + suffix)
+    return "\n".join(lines)
+
+
+@pay_router.callback_query(F.data == "wk:history")
+async def wk_history(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Доступно по подписке", show_alert=True)
+        return
+    if callback.message:
+        await callback.message.answer(await _history_text(callback.from_user.id))
+    await callback.answer()
+
+
+@pay_router.message(Command("history"))
+async def cmd_history(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not await _ensure_access(message, message.from_user.id):
+        return
+    await message.answer(await _history_text(message.from_user.id))
 
 
 @pay_router.callback_query(F.data == "wk:pick")
@@ -2720,6 +2775,7 @@ async def _set_commands(bot: Bot) -> None:
         BotCommand(command="diary", description="Дневник питания"),
         BotCommand(command="progress", description="Прогресс тренировок"),
         BotCommand(command="remind", description="Напоминания о тренировках"),
+        BotCommand(command="history", description="История и стаж"),
         BotCommand(command="sub", description="Подписка и пробный период"),
         BotCommand(command="help", description="Справка"),
     ]

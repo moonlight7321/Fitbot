@@ -289,6 +289,75 @@ def _series_sync(user_id: int, slug: str, days: int):
         conn.close()
 
 
+def _history_weeks_sync(user_id: int, limit: int) -> dict:
+    first = _first_date_sync(user_id)
+    if not first:
+        return {"weeks": [], "experience": 0, "total": 0, "streak": 0}
+
+    start0 = datetime.strptime(first, "%Y-%m-%d").date()
+    today = datetime.now(TIMEZONE).date()
+    current = max(1, (today - start0).days // 7 + 1)
+
+    conn = _open()
+    try:
+        workouts = conn.execute(
+            "SELECT done_on, day_index FROM workouts WHERE user_id = ?", (user_id,)
+        ).fetchall()
+        checks = conn.execute(
+            "SELECT week, day_index, done FROM workout_checks WHERE user_id = ?", (user_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    def week_of(day_str: str) -> int:
+        try:
+            day = datetime.strptime(day_str, "%Y-%m-%d").date()
+        except ValueError:
+            return 0
+        return max(1, (day - start0).days // 7 + 1)
+
+    done_by_week: dict = {}
+    for row in workouts:
+        done_by_week.setdefault(week_of(row["done_on"]), set()).add(int(row["day_index"]))
+
+    partial: dict = {}
+    skipped: dict = {}
+    for row in checks:
+        week = int(row["week"])
+        value = int(row["done"])
+        if value == 2:
+            partial.setdefault(week, set()).add(int(row["day_index"]))
+        elif value == 0:
+            skipped.setdefault(week, set()).add(int(row["day_index"]))
+
+    weeks = []
+    for week in range(current, max(0, current - limit), -1):
+        done = len(done_by_week.get(week, set()))
+        weeks.append({
+            "week": week,
+            "done": done,
+            "partial": len(partial.get(week, set())),
+            "skipped": len(skipped.get(week, set())),
+            "deload": week % 4 == 0,
+        })
+
+    streak = 0
+    for week in range(current, 0, -1):
+        if done_by_week.get(week):
+            streak += 1
+        elif week == current:
+            continue          # текущая неделя может быть ещё не начата
+        else:
+            break
+
+    return {
+        "weeks": weeks,
+        "experience": current,
+        "total": len(workouts),
+        "streak": streak,
+    }
+
+
 def _count_sync(user_id: int) -> int:
     conn = _open()
     try:
@@ -313,6 +382,10 @@ async def history(user_id: int, days: int = 28):
 
 async def count(user_id: int) -> int:
     return await asyncio.to_thread(_count_sync, user_id)
+
+
+async def history_weeks(user_id: int, limit: int = 8) -> dict:
+    return await asyncio.to_thread(_history_weeks_sync, user_id, limit)
 
 
 async def week_index(user_id: int) -> int:
