@@ -21,6 +21,7 @@ import re
 import uuid
 from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Union
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -1009,8 +1010,9 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
             ],
             [
                 InlineKeyboardButton(text="📈 Прогресс", callback_data="wk:report"),
-                InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit"),
+                InlineKeyboardButton(text="⏰ Напоминания", callback_data="rm:menu"),
             ],
+            [InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit")],
             [InlineKeyboardButton(text="🏋️ Упражнения", callback_data="ex:back")],
         ]
     )
@@ -1827,6 +1829,215 @@ async def wk_input(message: Message, state: FSMContext) -> None:
     await message.answer("\n".join(lines))
 
 
+# ---------------------------------------------------------------------------
+# Напоминания о тренировках
+# ---------------------------------------------------------------------------
+WEEKDAY_NAMES = {1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб", 7: "Вс"}
+TIME_OPTIONS = ["07:00", "09:00", "12:00", "18:00", "19:00", "21:00"]
+
+
+def _remind_text(profile: "profiles.Profile") -> str:
+    if not profile.has_reminders:
+        return ("<b>Напоминания</b>\n\nПока выключены. Выберите дни и время — "
+                "бот напишет в эти дни с планом тренировки.")
+    days = ", ".join(WEEKDAY_NAMES.get(d, str(d)) for d in profile.weekdays)
+    return f"<b>Напоминания</b>\n\nСейчас: {days} в {profile.workout_time}"
+
+
+def _remind_markup(profile: "profiles.Profile") -> InlineKeyboardMarkup:
+    selected = set(profile.weekdays)
+    day_buttons = [
+        InlineKeyboardButton(
+            text=("✅" if d in selected else "") + WEEKDAY_NAMES[d],
+            callback_data=f"rm:day:{d}",
+        )
+        for d in WEEKDAY_NAMES
+    ]
+    rows = [day_buttons[:4], day_buttons[4:]]
+    rows.append([
+        InlineKeyboardButton(
+            text=("• " if t == profile.workout_time else "") + t,
+            callback_data=f"rm:time:{t}",
+        )
+        for t in TIME_OPTIONS[:3]
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text=("• " if t == profile.workout_time else "") + t,
+            callback_data=f"rm:time:{t}",
+        )
+        for t in TIME_OPTIONS[3:]
+    ])
+    rows.append([InlineKeyboardButton(text="🔕 Выключить", callback_data="rm:off")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _show_reminders(message: Message, user_id: int) -> None:
+    profile = await profiles.get(user_id)
+    if profile is None:
+        await message.answer("Сначала соберите план: 📋 Мой план")
+        return
+    await message.answer(_remind_text(profile), reply_markup=_remind_markup(profile))
+
+
+@pay_router.message(Command("remind"))
+async def cmd_remind(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not await _ensure_access(message, message.from_user.id):
+        return
+    await _show_reminders(message, message.from_user.id)
+
+
+@pay_router.callback_query(F.data == "rm:menu")
+async def rm_menu(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Доступно по подписке", show_alert=True)
+        return
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+    if callback.message:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=_remind_markup(profile))
+        except Exception:  # noqa: BLE001
+            pass
+        await callback.message.answer(_remind_text(profile), reply_markup=_remind_markup(profile))
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("rm:day:"))
+async def rm_day(callback: CallbackQuery) -> None:
+    try:
+        day = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный день", show_alert=True)
+        return
+    profile = await profiles.get(callback.from_user.id) if callback.from_user else None
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+
+    days = set(profile.weekdays)
+    if day in days:
+        days.discard(day)
+    else:
+        days.add(day)
+    profile = replace(profile, workout_days=",".join(str(d) for d in sorted(days)))
+    await profiles.save(profile)
+
+    if callback.message:
+        try:
+            await callback.message.edit_text(_remind_text(profile), reply_markup=_remind_markup(profile))
+        except Exception:  # noqa: BLE001
+            pass
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("rm:time:"))
+async def rm_time(callback: CallbackQuery) -> None:
+    value = (callback.data or "").split(":")[2]
+    profile = await profiles.get(callback.from_user.id) if callback.from_user else None
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+    if value not in TIME_OPTIONS:
+        await callback.answer("Некорректное время", show_alert=True)
+        return
+
+    profile = replace(profile, workout_time=value)
+    await profiles.save(profile)
+    if callback.message:
+        try:
+            await callback.message.edit_text(_remind_text(profile), reply_markup=_remind_markup(profile))
+        except Exception:  # noqa: BLE001
+            pass
+    await callback.answer(f"Время: {value}")
+
+
+@pay_router.callback_query(F.data == "rm:off")
+async def rm_off(callback: CallbackQuery) -> None:
+    profile = await profiles.get(callback.from_user.id) if callback.from_user else None
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+    profile = replace(profile, workout_days="", workout_time="")
+    await profiles.save(profile)
+    if callback.message:
+        try:
+            await callback.message.edit_text(_remind_text(profile), reply_markup=_remind_markup(profile))
+        except Exception:  # noqa: BLE001
+            pass
+    await callback.answer("Напоминания выключены")
+
+
+async def _send_workout_reminders(bot: Bot) -> None:
+    tz = ZoneInfo(ctx.settings.timezone)
+    now = datetime.now(tz)
+    today = now.strftime("%Y-%m-%d")
+    weekday = now.isoweekday()
+    hhmm = now.strftime("%H:%M")
+
+    for profile in await profiles.with_reminders():
+        if weekday not in profile.weekdays:
+            continue
+        try:
+            hour, minute = (int(x) for x in profile.workout_time.split(":"))
+            scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        except (ValueError, AttributeError):
+            continue
+        # Допускаем опоздание до 30 минут: цикл может проснуться не в ту секунду
+        if now < scheduled or (now - scheduled) > timedelta(minutes=30):
+            continue
+        if profile.last_reminder == today:
+            continue
+        if not await subs.has_access(profile.user_id):
+            continue
+
+        plan = planner.build(profile)
+        if not plan.days:
+            continue
+        index = profile.weekdays.index(weekday) % len(plan.days)
+        day = plan.days[index]
+        weights = await _plan_weights(profile.user_id, profile, plan)
+
+        lines = [f"<b>Сегодня: день {index + 1} · {day.title}</b>", ""]
+        for n, slot in enumerate(day.slots, 1):
+            label = weights.get(slot.exercise.slug)
+            suffix = f" · {label}" if label else ""
+            lines.append(f"{n}. {slot.exercise.name_ru} — {slot.sets}×{slot.reps}{suffix}")
+        lines.append("")
+        lines.append("<i>Отметьте результат после тренировки — тогда прогрессия сработает.</i>")
+
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Записать", callback_data=f"wk:day:{index}"),
+                InlineKeyboardButton(text="😕 Не смог", callback_data=f"wk:none:{index}"),
+            ]]
+        )
+        try:
+            await bot.send_message(profile.user_id, "\n".join(lines), reply_markup=markup)
+        except Exception:  # noqa: BLE001
+            logger.warning("Не смог отправить напоминание о тренировке %s", profile.user_id)
+            continue
+        await profiles.mark_reminder(profile.user_id, today)
+        logger.info("Напоминание о тренировке отправлено: %s", profile.user_id)
+
+
+async def _workout_loop(bot: Bot) -> None:
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await _send_workout_reminders(bot)
+        except Exception:  # noqa: BLE001
+            logger.exception("Сбой в цикле напоминаний о тренировках")
+        await asyncio.sleep(60)
+
+
 @pay_router.message(F.text, ~F.text.startswith("/"), ~F.text.in_(MENU_TEXTS))
 async def on_unknown(message: Message) -> None:
     """Сообщение без команды раньше просто игнорировалось («is not handled»).
@@ -2325,6 +2536,7 @@ async def _set_commands(bot: Bot) -> None:
         BotCommand(command="calories", description="Калории и БЖУ"),
         BotCommand(command="diary", description="Дневник питания"),
         BotCommand(command="progress", description="Прогресс тренировок"),
+        BotCommand(command="remind", description="Напоминания о тренировках"),
         BotCommand(command="sub", description="Подписка и пробный период"),
         BotCommand(command="help", description="Справка"),
     ]
@@ -2452,6 +2664,7 @@ async def main() -> None:
 
     backup_task = asyncio.create_task(_daily_backup(bot))
     reminder_task = asyncio.create_task(_reminder_loop(bot))
+    workout_task = asyncio.create_task(_workout_loop(bot))
 
     if settings.webapp_port:
         try:
@@ -2468,6 +2681,7 @@ async def main() -> None:
     finally:
         backup_task.cancel()
         reminder_task.cancel()
+        workout_task.cancel()
         if scheduler is not None:
             scheduler.shutdown(wait=False)
         await bot.session.close()

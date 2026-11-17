@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS profiles (
     sex        TEXT DEFAULT '',
     age        INTEGER DEFAULT 0,
     activity   TEXT DEFAULT '',
+    workout_days TEXT DEFAULT '',
+    workout_time TEXT DEFAULT '',
+    last_reminder TEXT DEFAULT '',
     updated_at TEXT NOT NULL
 );
 """
@@ -78,6 +81,17 @@ class Profile:
     sex: str = ""
     age: int = 0
     activity: str = ""
+    workout_days: str = ""
+    workout_time: str = ""
+    last_reminder: str = ""
+
+    @property
+    def weekdays(self) -> list:
+        return sorted({int(x) for x in (self.workout_days or "").split(",") if x.strip().isdigit()})
+
+    @property
+    def has_reminders(self) -> bool:
+        return bool(self.weekdays) and bool(self.workout_time)
 
     @property
     def activity_title(self) -> str:
@@ -127,6 +141,9 @@ def _open() -> sqlite3.Connection:
         "sex": "ALTER TABLE profiles ADD COLUMN sex TEXT DEFAULT ''",
         "age": "ALTER TABLE profiles ADD COLUMN age INTEGER DEFAULT 0",
         "activity": "ALTER TABLE profiles ADD COLUMN activity TEXT DEFAULT ''",
+        "workout_days": "ALTER TABLE profiles ADD COLUMN workout_days TEXT DEFAULT ''",
+        "workout_time": "ALTER TABLE profiles ADD COLUMN workout_time TEXT DEFAULT ''",
+        "last_reminder": "ALTER TABLE profiles ADD COLUMN last_reminder TEXT DEFAULT ''",
     }
     added = False
     for column, sql in migrations.items():
@@ -157,6 +174,9 @@ def _get_sync(user_id: int) -> Optional[Profile]:
         sex=((row["sex"] if "sex" in keys else "") or ""),
         age=int((row["age"] if "age" in keys else 0) or 0),
         activity=((row["activity"] if "activity" in keys else "") or ""),
+        workout_days=((row["workout_days"] if "workout_days" in keys else "") or ""),
+        workout_time=((row["workout_time"] if "workout_time" in keys else "") or ""),
+        last_reminder=((row["last_reminder"] if "last_reminder" in keys else "") or ""),
     )
 
 
@@ -166,19 +186,23 @@ def _save_sync(profile: Profile) -> None:
         conn.execute(
             """
             INSERT INTO profiles (user_id, height, weight, experience, days, minutes,
-                                  goal, equipment, limitations, sex, age, activity, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  goal, equipment, limitations, sex, age, activity,
+                                  workout_days, workout_time, last_reminder, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 height = excluded.height, weight = excluded.weight,
                 experience = excluded.experience, days = excluded.days,
                 minutes = excluded.minutes, goal = excluded.goal,
                 equipment = excluded.equipment, limitations = excluded.limitations,
                 sex = excluded.sex, age = excluded.age, activity = excluded.activity,
+                workout_days = excluded.workout_days, workout_time = excluded.workout_time,
+                last_reminder = excluded.last_reminder,
                 updated_at = excluded.updated_at
             """,
             (profile.user_id, profile.height, profile.weight, profile.experience,
              profile.days, profile.minutes, profile.goal, profile.equipment,
-             profile.limitations, profile.sex, profile.age, profile.activity, _now()),
+             profile.limitations, profile.sex, profile.age, profile.activity,
+             profile.workout_days, profile.workout_time, profile.last_reminder, _now()),
         )
         conn.commit()
     finally:
@@ -192,3 +216,42 @@ async def get(user_id: int) -> Optional[Profile]:
 
 async def save(profile: Profile) -> None:
     await asyncio.to_thread(_save_sync, profile)
+
+
+def _with_reminders_sync() -> list:
+    conn = _open()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM profiles WHERE workout_days != '' AND workout_time != ''"
+        ).fetchall()
+        return [
+            Profile(
+                user_id=r["user_id"], height=r["height"], weight=r["weight"],
+                experience=r["experience"], days=r["days"], minutes=r["minutes"],
+                goal=r["goal"], equipment=r["equipment"],
+                limitations=r["limitations"] or "", sex=r["sex"] or "",
+                age=int(r["age"] or 0), activity=r["activity"] or "",
+                workout_days=r["workout_days"] or "", workout_time=r["workout_time"] or "",
+                last_reminder=r["last_reminder"] or "",
+            )
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def _mark_reminder_sync(user_id: int, day: str) -> None:
+    conn = _open()
+    try:
+        conn.execute("UPDATE profiles SET last_reminder = ? WHERE user_id = ?", (day, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def with_reminders() -> list:
+    return await asyncio.to_thread(_with_reminders_sync)
+
+
+async def mark_reminder(user_id: int, day: str) -> None:
+    await asyncio.to_thread(_mark_reminder_sync, user_id, day)
