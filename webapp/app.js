@@ -165,6 +165,10 @@ function renderProgress(data) {
   return ''
     + '<div class="card"><h2>Прогресс</h2>'
     + '<div class="muted">Тренировок записано: ' + progress.count + '</div>'
+    + ((progress.weak_groups || []).length
+        ? '<div class="muted">Отстают: ' + progress.weak_groups
+            .map(w => esc(w.group) + ' (' + w.count + ')').join(', ') + '</div>'
+        : '')
     + (items ? '<ul class="list" style="margin-top:8px">' + items + '</ul>'
              : '<p class="muted">Пока пусто — запишите первую тренировку.</p>')
     + (progress.series || []).map(sparkline).join('')

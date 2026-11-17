@@ -1028,8 +1028,10 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
     user_id = message.from_user.id if message.from_user else message.chat.id
     week = await progress.week_state(user_id, len(plan.days))
     weights = await _plan_weights(user_id, profile, plan, week)
+    weak = {group for group, _count in await progress.weak_groups(user_id)}
     await message.answer(
-        planner.render(profile, plan, weights, deload=week["deload"]), reply_markup=markup
+        planner.render(profile, plan, weights, deload=week["deload"], weak_groups=weak),
+        reply_markup=markup,
     )
 
 
@@ -1591,12 +1593,40 @@ class WorkoutForm(StatesGroup):
     input = State()
 
 
+class PartialForm(StatesGroup):
+    exercises = State()
+    reason = State()
+
+
+PARTIAL_REASONS = {
+    "reps": "не хватило повторений",
+    "weight": "не осилил вес",
+    "pain": "дискомфорт или боль",
+}
+
+
+def _partial_keyboard(day, selected: set) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(
+            text=("✅ " if slot.exercise.slug in selected else "") + slot.exercise.name_ru,
+            callback_data=f"part:t:{slot.exercise.slug}",
+        )]
+        for slot in day.slots
+    ]
+    rows.append([InlineKeyboardButton(text="Готово →", callback_data="part:next")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def _progress_report(user_id: int) -> str:
     rows = await progress.history(user_id, 28)
     total = await progress.count(user_id)
+    weak = await progress.weak_groups(user_id)
     if not rows:
-        return ("<b>Прогресс</b>\n\nПока пусто. Запишите первую тренировку — "
+        text = ("<b>Прогресс</b>\n\nПока пусто. Запишите первую тренировку — "
                 "и здесь появится динамика рабочих весов.")
+        if weak:
+            text += "\n\nОтстают: " + ", ".join(f"{group} ({count})" for group, count in weak[:3])
+        return text
 
     grouped: Dict[str, List] = {}
     for row in rows:
@@ -1604,6 +1634,8 @@ async def _progress_report(user_id: int) -> str:
 
     week = await progress.week_state(user_id, 0)
     header = f"<b>Прогресс</b>\nТренировок записано: {total}"
+    if weak:
+        header += "\nОтстают: " + ", ".join(f"{group} ({count})" for group, count in weak[:3])
     if week["done"]:
         header += f"\nНа этой неделе отмечено: {week['done']}"
     lines = [header + "\n"]
@@ -1755,13 +1787,13 @@ async def wk_part(callback: CallbackQuery) -> None:
 
 
 @pay_router.callback_query(F.data.startswith("wk:part:"))
-async def wk_part_day(callback: CallbackQuery) -> None:
+async def wk_part_day(callback: CallbackQuery, state: FSMContext) -> None:
     try:
         index = int((callback.data or "").split(":")[2])
     except (IndexError, ValueError):
         await callback.answer("Некорректный день", show_alert=True)
         return
-    if callback.from_user is None:
+    if callback.from_user is None or callback.message is None:
         return
 
     profile = await profiles.get(callback.from_user.id)
@@ -1773,13 +1805,96 @@ async def wk_part_day(callback: CallbackQuery) -> None:
         await callback.answer("Такого дня нет", show_alert=True)
         return
 
+    day = plan.days[index]
+    await state.set_state(PartialForm.exercises)
+    await state.update_data(part_day=index, part_selected=[])
+    await callback.message.answer(
+        f"День {index + 1}: {day.title}\n\n"
+        "Отметьте упражнения, которые не получились или дались тяжелее обычного.",
+        reply_markup=_partial_keyboard(day, set()),
+    )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("part:t:"))
+async def part_toggle(callback: CallbackQuery, state: FSMContext) -> None:
+    slug = (callback.data or "").split(":", 2)[2]
+    data = await state.get_data()
+    selected = set(data.get("part_selected") or [])
+    index = int(data.get("part_day", 0))
+
+    if slug in selected:
+        selected.discard(slug)
+    else:
+        selected.add(slug)
+    await state.update_data(part_selected=sorted(selected))
+
+    profile = await profiles.get(callback.from_user.id) if callback.from_user else None
+    if profile is None or callback.message is None:
+        await callback.answer("Анкета не найдена", show_alert=True)
+        return
+    plan = planner.build(profile)
+    if index < len(plan.days):
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=_partial_keyboard(plan.days[index], selected)
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data == "part:next")
+async def part_next(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    selected = data.get("part_selected") or []
+    if not selected:
+        await callback.answer("Отметьте хотя бы одно упражнение", show_alert=True)
+        return
+
+    await state.set_state(PartialForm.reason)
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=text, callback_data=f"part:r:{code}")]
+        for code, text in PARTIAL_REASONS.items()
+    ])
+    if callback.message:
+        await callback.message.answer("Что именно не получилось?", reply_markup=markup)
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("part:r:"))
+async def part_reason(callback: CallbackQuery, state: FSMContext) -> None:
+    reason = (callback.data or "").split(":", 2)[2]
+    if reason not in PARTIAL_REASONS:
+        await callback.answer("Неизвестная причина", show_alert=True)
+        return
+    data = await state.get_data()
+    selected = data.get("part_selected") or []
+    index = int(data.get("part_day", 0))
+    if not selected or callback.from_user is None:
+        await state.clear()
+        await callback.answer("Начните заново", show_alert=True)
+        return
+
     week = await progress.week_index(callback.from_user.id)
     await progress.set_check(callback.from_user.id, week, index, 2)
+    await progress.add_failures(
+        callback.from_user.id, week, index, [(slug, reason) for slug in selected]
+    )
+    await state.clear()
+
+    weak = await progress.weak_groups(callback.from_user.id)
+    lines = [
+        f"Отметил: день {index + 1} выполнен частично.",
+        f"Причина: {PARTIAL_REASONS[reason]}.",
+        "Вес на следующую тренировку не повышаю.",
+    ]
+    if weak:
+        lines.append("")
+        lines.append("Чаще всего не получается: "
+                     + ", ".join(f"{group} ({count})" for group, count in weak[:3]))
     if callback.message:
-        await callback.message.answer(
-            f"Отметил: день {index + 1} выполнен частично.\n"
-            "Вес на следующую тренировку не повышаю — сначала закрепите результат."
-        )
+        await callback.message.answer("\n".join(lines))
     await callback.answer()
 
 

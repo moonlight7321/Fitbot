@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS workout_sets (
     weight     REAL NOT NULL,
     reps       INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS failures (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    week       INTEGER NOT NULL,
+    day_index  INTEGER NOT NULL,
+    slug       TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_failures_user ON failures (user_id, week);
 CREATE TABLE IF NOT EXISTS workout_checks (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL,
@@ -205,6 +215,34 @@ def _week_done_days_sync(user_id: int, start) -> set:
         conn.close()
 
 
+def _add_failures_sync(user_id: int, week: int, day_index: int, items) -> None:
+    conn = _open()
+    try:
+        now = datetime.now(TIMEZONE).strftime("%Y-%m-%dT%H:%M:%S")
+        for slug, reason in items:
+            conn.execute(
+                """INSERT INTO failures (user_id, week, day_index, slug, reason, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (user_id, week, day_index, slug, reason, now),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _failures_sync(user_id: int, days: int):
+    since = (datetime.now(TIMEZONE) - timedelta(days=days)).strftime("%Y-%m-%d")
+    conn = _open()
+    try:
+        return conn.execute(
+            "SELECT slug, reason, week, day_index FROM failures "
+            "WHERE user_id = ? AND created_at >= ?",
+            (user_id, since),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
 def _checks_sync(user_id: int, week: int):
     conn = _open()
     try:
@@ -287,6 +325,27 @@ async def week_bounds(user_id: int):
 
 async def checks(user_id: int, week: int) -> dict:
     return await asyncio.to_thread(_checks_sync, user_id, week)
+
+
+async def add_failures(user_id: int, week: int, day_index: int, items) -> None:
+    await asyncio.to_thread(_add_failures_sync, user_id, week, day_index, items)
+
+
+async def failures(user_id: int, days: int = 28):
+    return await asyncio.to_thread(_failures_sync, user_id, days)
+
+
+async def weak_groups(user_id: int, days: int = 28) -> list:
+    """Группы мышц, где чаще всего не получалось выполнить упражнение."""
+    import exercises as lib
+
+    rows = await failures(user_id, days)
+    counts: dict = {}
+    for row in rows:
+        ex = lib.by_slug(row["slug"])
+        group = ex.group if ex else "Другое"
+        counts[group] = counts.get(group, 0) + 1
+    return sorted(counts.items(), key=lambda item: item[1], reverse=True)
 
 
 async def week_done_days(user_id: int, start) -> set:

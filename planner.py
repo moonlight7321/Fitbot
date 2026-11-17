@@ -180,7 +180,7 @@ def build(profile: "prof.Profile") -> Plan:
 
 
 def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
-           deload: bool = False) -> str:
+           deload: bool = False, weak_groups: set | None = None) -> str:
     lines = [
         "<b>Ваш план на неделю</b>",
         f"{profile.goal_title} · {profile.experience_title} · {profile.equipment_title}",
@@ -204,7 +204,8 @@ def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
                 label = weights.get(slot.exercise.slug)
                 if label:
                     suffix = f" · <b>{label}</b>"
-            lines.append(f"{n}. {slot.exercise.name_ru} — {sets_text}×{slot.reps}{suffix}")
+            mark = "⚠️ " if weak_groups and slot.exercise.group in weak_groups else ""
+            lines.append(f"{n}. {mark}{slot.exercise.name_ru} — {sets_text}×{slot.reps}{suffix}")
         lines.append("")
     lines.append(f"<i>{plan.note}</i>")
     return "\n".join(lines)

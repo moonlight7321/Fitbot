@@ -224,7 +224,13 @@ async def _progress_payload(user_id: int) -> dict:
             ],
         })
 
-    return {"count": await progress.count(user_id), "items": items[:12], "series": series}
+    weak = await progress.weak_groups(user_id)
+    return {
+        "count": await progress.count(user_id),
+        "items": items[:12],
+        "series": series,
+        "weak_groups": [{"group": group, "count": count} for group, count in weak[:5]],
+    }
 
 
 async def api_progress(request: web.Request) -> web.Response:
@@ -330,6 +336,14 @@ async def api_check(request: web.Request) -> web.Response:
 
     week = await progress.week_index(user_id)
     await progress.set_check(user_id, week, day_index, value)
+
+    slugs = data.get("slugs") or []
+    reason = str(data.get("reason", "")).strip()
+    if value == 2 and isinstance(slugs, list) and slugs:
+        await progress.add_failures(
+            user_id, week, day_index,
+            [(str(slug), reason or "unknown") for slug in slugs],
+        )
     state = await progress.week_state(user_id, len(plan.days))
     return web.json_response({
         "week": {
