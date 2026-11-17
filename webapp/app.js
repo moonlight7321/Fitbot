@@ -102,18 +102,28 @@ function profileFormCard(data) {
     + '</div></div>';
 }
 
-function paywallCard(title) {
+function paywallCard(title, data) {
+  const sub = (data && data.subscription) || {};
+  const trial = (sub.trial_used || sub.kind !== 'none')
+    ? ''
+    : '<button class="primary" id="trial-btn" style="margin-top:8px">Попробовать 7 дней бесплатно</button>';
+  const paid = sub.kind === 'expired'
+    ? '<p class="muted">Подписка закончилась. Продлить можно в боте: /sub</p>'
+    : '<p class="muted">Оформить подписку — в боте: /sub</p>';
+
   return '<div class="card"><h2>' + title + '</h2>'
     + '<p class="muted">Доступно по подписке. Пробный период — 7 дней бесплатно, '
     + 'дальше 349 ₽ за 30 дней.</p>'
     + '<p class="muted">Без подписки остаются калькулятор калорий и 17 базовых упражнений.</p>'
-    + '<p class="muted">Оформить можно в боте: /sub</p></div>';
+    + trial + paid + '</div>';
 }
 
 function renderPlan(data) {
-  if (!data.access) return paywallCard("План");
+  const form = profileFormCard(data);
+  if (!data.access) return form + paywallCard("План", data);
   if (!data.profile) {
-    return '<div class="card"><h2>План</h2><p class="muted">Анкета ещё не заполнена. Откройте бота и нажмите «📋 Мой план».</p></div>';
+    return form + '<div class="card"><h2>План</h2><p class="muted">'
+      + 'Заполните анкету выше — план построится сразу.</p></div>';
   }
   const p = data.profile;
   const nextIndex = (data.next_day === undefined || data.next_day === null) ? 0 : data.next_day;
@@ -140,7 +150,7 @@ function renderPlan(data) {
         + (s.weight ? ' · <b>' + esc(s.weight) + '</b>' : '') + '</li>').join('') + '</ol></div>'
   ).join('');
 
-  return profileFormCard(data) + deload + ''
+  return form + deload + ''
     + '<div class="card"><h2>Ваш план</h2>'
     + '<div class="muted">' + esc(p.goal) + ' · ' + esc(p.experience) + ' · ' + esc(p.equipment) + '</div>'
     + '<div class="muted">' + p.days + ' тренировки в неделю по ' + p.minutes + ' минут</div>'
@@ -374,7 +384,7 @@ function renderExercises() {
 }
 
 function renderDiary(data) {
-  if (!data.access || !data.diary) return paywallCard("Дневник");
+  if (!data.access || !data.diary) return paywallCard("Дневник", data);
   const totals = data.diary.totals;
   const target = data.calories ? data.calories.target : null;
   const items = data.diary.items || [];
@@ -419,7 +429,7 @@ function renderCalories(data) {
 }
 
 function renderProgressTab(data) {
-  if (!data.access) return paywallCard("Прогресс");
+  if (!data.access) return paywallCard("Прогресс", data);
   const series = (data.progress && data.progress.series) || [];
   const nutrition = (data.diary_history || []).map(row => ({ date: row.day, weight: row.kcal }));
   const history = data.history || { weeks: [], experience: 0, total: 0, streak: 0 };
@@ -509,6 +519,15 @@ function render() {
       catch (e) { toast("Ошибка очистки"); }
     };
   }
+
+  const trialBtn = document.getElementById("trial-btn");
+  if (trialBtn) trialBtn.onclick = async () => {
+    try {
+      await api("/api/trial", { method: "POST", body: "{}" });
+      toast("Пробный период активирован");
+      await loadOverview();
+    } catch (e) { toast(e.message || "Не удалось активировать"); }
+  };
 
   if (state.tab === "plan") {
     const toggle = document.getElementById("profile-toggle");

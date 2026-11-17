@@ -176,6 +176,7 @@ async def api_overview(request: web.Request) -> web.Response:
             "kind": status.kind,
             "active": status.active,
             "days_left": status.days_left,
+            "trial_used": status.trial_used,
             "paid_until": status.paid_until.isoformat() if status.paid_until else None,
         },
         "profile": None,
@@ -455,6 +456,19 @@ async def api_workout_custom(request: web.Request) -> web.Response:
     profile = dataclasses.replace(profile, day_cursor=(day_index + 1) % len(plan.days))
     await profiles.save(profile)
     return web.json_response({"ok": True, "records": len(records)})
+
+
+async def api_trial(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    try:
+        await subs.start_trial(user_id)
+    except subs.TrialAlreadyUsed:
+        return web.json_response(
+            {"error": "trial used", "message": "Пробный период уже был"},
+            status=400,
+        )
+    return web.json_response({"ok": True})
 
 
 async def api_profile_save(request: web.Request) -> web.Response:
@@ -869,7 +883,9 @@ async def api_diary_clear(request: web.Request) -> web.Response:
 
 
 async def index(request: web.Request) -> web.StreamResponse:
-    return web.FileResponse(WEBAPP_DIR / "index.html")
+    response = web.FileResponse(WEBAPP_DIR / "index.html")
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
 
 
 def create_app(settings: Settings) -> web.Application:
@@ -889,6 +905,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_post("/api/feel", api_feel)
     app.router.add_post("/api/skip", api_skip)
     app.router.add_post("/api/profile", api_profile_save)
+    app.router.add_post("/api/trial", api_trial)
     app.router.add_post("/api/reminders", api_reminders)
     app.router.add_get("/api/alternatives/{slug}", api_alternatives)
     app.router.add_post("/api/workouts/custom", api_workout_custom)
