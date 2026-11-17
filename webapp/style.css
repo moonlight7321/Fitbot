@@ -62,6 +62,7 @@ body {
 .ed-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
 .ed-row .ex { flex: 1; }
 .ed-num { width: auto; margin-top: 0; padding: 8px 6px; font-size: 13px; }
+.ed-weight { width: 64px; }
 .input-row { display: flex; gap: 8px; margin-top: 10px; }
 .field { display: block; margin-top: 8px; font-size: 12px; color: var(--muted); }
 .chk { display: inline-flex; align-items: center; gap: 6px; margin: 4px 10px 4px 0; font-size: 13px; color: var(--text); }

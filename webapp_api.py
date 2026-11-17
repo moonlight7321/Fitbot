@@ -396,6 +396,9 @@ async def api_workout_custom(request: web.Request) -> web.Response:
         slug = str(item.get("slug", ""))
         if exercises.by_slug(slug) is None:
             continue
+        original = str(item.get("original", "")).strip()
+        if original and original != slug:
+            await progress.add_replacement(user_id, original, slug)
         try:
             sets = max(1, min(10, int(item.get("sets", 3))))
             reps = max(1, min(50, int(item.get("reps", 10))))

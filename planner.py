@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 import exercises as lib
+import exercises as lib
 import profiles as prof
 
 
@@ -140,7 +141,7 @@ def _pick(group: str, pool: Dict[str, List["lib.Exercise"]], offset: int, used: 
     return None
 
 
-def build(profile: "prof.Profile") -> Plan:
+def build(profile: "prof.Profile", replacements: dict | None = None) -> Plan:
     excluded = excluded_slugs(profile.limits)
     pool: Dict[str, List["lib.Exercise"]] = {}
     for ex in lib.all_exercises():
@@ -172,6 +173,18 @@ def build(profile: "prof.Profile") -> Plan:
                 Slot(exercise=ex, sets=params["sets"], reps=params["reps"], rest=params["rest"])
             )
         days.append(day)
+
+    # Сохранённые замены: человек заменил упражнение — предлагаем замену и дальше
+    replacements = replacements or getattr(profile, "replacements", None)
+    if replacements:
+        for day in days:
+            for slot in day.slots:
+                new_slug = replacements.get(slot.exercise.slug)
+                if not new_slug:
+                    continue
+                replacement = lib.by_slug(new_slug)
+                if replacement is not None:
+                    slot.exercise = replacement
 
     note = (
         "Разминка 5–10 минут перед каждым днём, заминка — 3–5 минут. "

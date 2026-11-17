@@ -37,6 +37,13 @@ CREATE TABLE IF NOT EXISTS workout_sets (
     weight     REAL NOT NULL,
     reps       INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS replacements (
+    user_id    INTEGER NOT NULL,
+    original   TEXT NOT NULL,
+    replacement TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, original)
+);
 CREATE TABLE IF NOT EXISTS failures (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL,
@@ -496,6 +503,68 @@ async def day_details(user_id: int, limit: int = 10, offset: int = 0) -> list:
     return await asyncio.to_thread(_day_details_sync, user_id, limit, offset)
 
 
+def _replacements_sync(user_id: int) -> dict:
+    conn = _open()
+    try:
+        rows = conn.execute(
+            "SELECT original, replacement FROM replacements WHERE user_id = ?", (user_id,)
+        ).fetchall()
+        return {row["original"]: row["replacement"] for row in rows}
+    finally:
+        conn.close()
+
+
+def _add_replacement_sync(user_id: int, original: str, replacement: str) -> None:
+    if not original or original == replacement:
+        return
+    conn = _open()
+    try:
+        conn.execute(
+            """INSERT INTO replacements (user_id, original, replacement, created_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id, original) DO UPDATE SET replacement = excluded.replacement""",
+            (user_id, original, replacement,
+             datetime.now(TIMEZONE).strftime("%Y-%m-%dT%H:%M:%S")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def replacements(user_id: int) -> dict:
+    return await asyncio.to_thread(_replacements_sync, user_id)
+
+
+async def add_replacement(user_id: int, original: str, replacement: str) -> None:
+    await asyncio.to_thread(_add_replacement_sync, user_id, original, replacement)
+
+
+async def build_plan(profile, user_id: int):
+    """План с учётом сохранённых замен упражнений."""
+    import planner
+
+    return planner.build(profile, await replacements(user_id))
+
+
+def _next_day_sync(user_id: int, total_days: int) -> int:
+    """Какой день показывать следующим: после последней тренировки цикла."""
+    if total_days <= 0:
+        return 0
+    anchor = _anchor_sync(user_id)
+    since = anchor.strftime("%Y-%m-%d") if anchor else "0000-01-01"
+    conn = _open()
+    try:
+        row = conn.execute(
+            "SELECT day_index FROM workouts WHERE user_id = ? AND done_on >= ? ORDER BY id DESC LIMIT 1",
+            (user_id, since),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return 0
+    return (int(row["day_index"]) + 1) % total_days
+
+
 def _count_sync(user_id: int) -> int:
     conn = _open()
     try:
@@ -516,6 +585,10 @@ async def last_sets(user_id: int, slug: str):
 
 async def history(user_id: int, days: int = 28):
     return await asyncio.to_thread(_history_sync, user_id, days)
+
+
+async def next_day_index(user_id: int, total_days: int) -> int:
+    return await asyncio.to_thread(_next_day_sync, user_id, total_days)
 
 
 async def count(user_id: int) -> int:

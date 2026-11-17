@@ -5,7 +5,7 @@ import asyncio
 import logging
 import os
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -86,6 +86,7 @@ class Profile:
     workout_time: str = ""
     last_reminder: str = ""
     day_cursor: int = -1
+    replacements: dict = dataclass_field(default_factory=dict)
 
     @property
     def weekdays(self) -> list:
@@ -169,6 +170,19 @@ def _get_sync(user_id: int) -> Optional[Profile]:
     # Читаем по именам: в старой базе колонка limitations добавлена в конец,
     # и позиция row[8] там — это updated_at, а не ограничения.
     keys = set(row.keys())
+    replacements: dict = {}
+    try:
+        repl_conn = _open()
+        try:
+            for item in repl_conn.execute(
+                "SELECT original, replacement FROM replacements WHERE user_id = ?", (user_id,)
+            ).fetchall():
+                replacements[item["original"]] = item["replacement"]
+        finally:
+            repl_conn.close()
+    except sqlite3.Error:
+        replacements = {}
+
     return Profile(
         user_id=row["user_id"], height=row["height"], weight=row["weight"],
         experience=row["experience"], days=row["days"], minutes=row["minutes"],
@@ -185,6 +199,7 @@ def _get_sync(user_id: int) -> Optional[Profile]:
             if "day_cursor" in keys and row["day_cursor"] is not None
             else -1
         ),
+        replacements=replacements,
     )
 
 

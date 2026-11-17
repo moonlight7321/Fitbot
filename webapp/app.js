@@ -184,6 +184,7 @@ function renderEditor(data) {
   const day = data.plan.days[index];
   const items = day.slots.map(slot => ({
     slug: slot.slug,
+    original: slot.slug,
     name: slot.name,
     sets: slot.sets,
     reps: repsFromRange(slot.reps),
@@ -200,6 +201,7 @@ function renderEditor(data) {
     + '<select class="select ed-num" data-ed-reps="' + i + '">'
     + [6, 8, 10, 12, 15, 20].map(n => '<option value="' + n + '"' + (n === item.reps ? ' selected' : '') + '>' + n + ' раз</option>').join('')
     + '</select>'
+    + '<input class="select ed-num ed-weight" type="number" min="0" max="500" step="0.5" data-ed-weight="' + i + '" value="' + item.weight + '" title="вес, кг">'
     + '</div>').join('');
 
   return ''
@@ -545,6 +547,9 @@ function render() {
     document.querySelectorAll("[data-ed-reps]").forEach(sel => {
       sel.onchange = () => { ed.items[Number(sel.dataset.edReps)].reps = Number(sel.value); };
     });
+    document.querySelectorAll("[data-ed-weight]").forEach(input => {
+      input.onchange = () => { ed.items[Number(input.dataset.edWeight)].weight = Number(input.value) || 0; };
+    });
     document.querySelectorAll("[data-ed-name]").forEach(btn => {
       btn.onclick = async () => {
         const i = Number(btn.dataset.edName);
@@ -561,6 +566,8 @@ function render() {
               item.slug = altBtn.dataset.alt;
               item.name = altBtn.textContent;
               item.weight = 0;
+              const weightInput = document.querySelector('[data-ed-weight="' + i + '"]');
+              if (weightInput) weightInput.value = 0;
               btn.textContent = item.name;
               box.classList.add("hidden");
             };
