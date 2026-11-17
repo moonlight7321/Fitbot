@@ -1924,10 +1924,12 @@ async def wk_skipday(callback: CallbackQuery) -> None:
 
     profile = replace(profile, day_cursor=(index + 1) % len(plan.days))
     await profiles.save(profile)
+    week = await progress.week_index(callback.from_user.id)
+    await progress.set_check(callback.from_user.id, week, index, 0)
     await callback.answer(f"День {index + 1} пропущен")
     await callback.message.answer(
-        f"День {index + 1} пропущен — записывать его не нужно. "
-        "Он останется в плане на следующем круге."
+        f"День {index + 1} отмечен пропущенным — он появится в «📋 Детали» и в истории. "
+        "На следующем круге день вернётся в план."
     )
     await _show_plan(callback.message, profile)
 
@@ -2279,6 +2281,262 @@ async def feel_apply(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+class EditForm(StatesGroup):
+    open = State()
+
+
+def _weight_label(weight: float, equipment: str) -> str:
+    return "вес тела" if weight <= 0 else planner.format_weight(weight, equipment)
+
+
+def _editor_markup(day, draft) -> InlineKeyboardMarkup:
+    rows = []
+    for i, slot in enumerate(day.slots, 1):
+        slug = slot.exercise.slug
+        item = draft.get(slug, {})
+        rows.append([
+            InlineKeyboardButton(text=f"{i}. {slot.exercise.name_ru}"[:30], callback_data=f"ed:ex:{slug}"),
+            InlineKeyboardButton(text=f"{item.get('sets', slot.sets)} подх.", callback_data=f"ed:sets:{slug}"),
+            InlineKeyboardButton(text=f"{item.get('reps', '—')} раз", callback_data=f"ed:reps:{slug}"),
+        ])
+    rows.append([
+        InlineKeyboardButton(text="✅ Записать", callback_data="ed:save"),
+        InlineKeyboardButton(text="✖️ Отмена", callback_data="ed:cancel"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _editor_text(day, draft) -> str:
+    lines = [
+        f"<b>День · {day.title}</b>",
+        "Настройте, что получилось. Нажмите на название, чтобы заменить упражнение, "
+        "на подходы или повторения — чтобы поправить цифры.",
+        "",
+    ]
+    for i, slot in enumerate(day.slots, 1):
+        slug = slot.exercise.slug
+        item = draft.get(slug, {})
+        lines.append(
+            f"{i}. {slot.exercise.name_ru} — {item.get('sets', slot.sets)} подхода по "
+            f"{item.get('reps', '—')} повторений · {_weight_label(item.get('weight', 0), slot.exercise.equipment)}"
+        )
+    return "\n".join(lines)
+
+
+async def _editor_refresh(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    index = int(data.get("ed_day", 0))
+    draft = data.get("draft") or {}
+    if callback.from_user is None or callback.message is None:
+        return
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        return
+    plan = planner.build(profile)
+    if index >= len(plan.days):
+        return
+    day = plan.days[index]
+    try:
+        await callback.message.edit_text(
+            _editor_text(day, draft), reply_markup=_editor_markup(day, draft)
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@pay_router.callback_query(F.data.startswith("ed:sets:"))
+async def ed_sets(callback: CallbackQuery) -> None:
+    slug = (callback.data or "").split(":", 2)[2]
+    rows = [[InlineKeyboardButton(text=str(n), callback_data=f"ed:set:{slug}:{n}") for n in range(1, 7)]]
+    if callback.message:
+        await callback.message.answer("Сколько подходов выполнили?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("ed:set:"))
+async def ed_set_value(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        _, _, slug, value = (callback.data or "").split(":")
+        sets = int(value)
+    except (ValueError, IndexError):
+        await callback.answer("Некорректно", show_alert=True)
+        return
+    data = await state.get_data()
+    draft = data.get("draft") or {}
+    if slug in draft:
+        draft[slug]["sets"] = sets
+        await state.update_data(draft=draft)
+    await _editor_refresh(callback, state)
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("ed:reps:"))
+async def ed_reps(callback: CallbackQuery) -> None:
+    slug = (callback.data or "").split(":", 2)[2]
+    options = [6, 8, 10, 12, 15, 20]
+    buttons = [InlineKeyboardButton(text=str(n), callback_data=f"ed:rep:{slug}:{n}") for n in options]
+    if callback.message:
+        await callback.message.answer(
+            "Сколько повторений в подходе?",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[buttons[:3], buttons[3:]]),
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("ed:rep:"))
+async def ed_rep_value(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        _, _, slug, value = (callback.data or "").split(":")
+        reps = int(value)
+    except (ValueError, IndexError):
+        await callback.answer("Некорректно", show_alert=True)
+        return
+    data = await state.get_data()
+    draft = data.get("draft") or {}
+    if slug in draft:
+        draft[slug]["reps"] = reps
+        await state.update_data(draft=draft)
+    await _editor_refresh(callback, state)
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("ed:ex:"))
+async def ed_exchange(callback: CallbackQuery, state: FSMContext) -> None:
+    slug = (callback.data or "").split(":", 2)[2]
+    if callback.from_user is None or callback.message is None:
+        return
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        return
+    data = await state.get_data()
+    index = int(data.get("ed_day", 0))
+    draft = data.get("draft") or {}
+    plan = planner.build(profile)
+    if index >= len(plan.days):
+        return
+    day = plan.days[index]
+    current = next((s.exercise for s in day.slots if s.exercise.slug == slug), None)
+    if current is None:
+        await callback.answer("Упражнение не найдено", show_alert=True)
+        return
+
+    excluded = planner.excluded_slugs(profile.limits)
+    alternatives = [
+        ex for ex in exercises.by_group(current.group)
+        if ex.slug != slug and planner._allowed(ex, profile.experience, profile.equipment, excluded)
+    ][:6]
+
+    rows = [
+        [InlineKeyboardButton(text=ex.name_ru[:30], callback_data=f"ed:chg:{slug}:{ex.slug}")]
+        for ex in alternatives
+    ]
+    rows.append([InlineKeyboardButton(text="Оставить как есть", callback_data="ed:leave")])
+    await callback.message.answer(
+        f"Чем заменить «{current.name_ru}»?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+    )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("ed:chg:"))
+async def ed_change(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        _, _, old, new = (callback.data or "").split(":")
+    except ValueError:
+        await callback.answer("Некорректно", show_alert=True)
+        return
+    if callback.from_user is None:
+        return
+    data = await state.get_data()
+    draft = data.get("draft") or {}
+    profile = await profiles.get(callback.from_user.id)
+    replacement = exercises.by_slug(new)
+    if profile is None or replacement is None or old not in draft:
+        await callback.answer("Не получилось заменить", show_alert=True)
+        return
+
+    sets = await progress.last_sets(callback.from_user.id, new)
+    weight = float(sets[-1]["weight"]) if sets else planner.start_weight(profile.weight, replacement)
+    item = draft.pop(old)
+    draft[new] = {
+        "sets": item.get("sets", 3),
+        "reps": item.get("reps", progress._top_reps(profile.goal)),
+        "weight": weight,
+        "replaced_from": old,
+    }
+    await state.update_data(draft=draft)
+
+    index = int(data.get("ed_day", 0))
+    plan = planner.build(profile)
+    if index < len(plan.days):
+        day = plan.days[index]
+        try:
+            if callback.message:
+                await callback.message.edit_text(
+                    _editor_text(day, draft), reply_markup=_editor_markup(day, draft)
+                )
+        except Exception:  # noqa: BLE001
+            pass
+    await callback.answer("Заменил")
+
+
+@pay_router.callback_query(F.data == "ed:leave")
+async def ed_leave(callback: CallbackQuery) -> None:
+    await callback.answer("Оставили как было")
+
+
+@pay_router.callback_query(F.data == "ed:cancel")
+async def ed_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if callback.message:
+        await callback.message.answer("Редактор закрыт, ничего не записано.")
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data == "ed:save")
+async def ed_save(callback: CallbackQuery, state: FSMContext) -> None:
+    if callback.from_user is None:
+        return
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Анкета не найдена", show_alert=True)
+        return
+    data = await state.get_data()
+    index = int(data.get("ed_day", 0))
+    draft = data.get("draft") or {}
+    plan = planner.build(profile)
+    if index >= len(plan.days):
+        await callback.answer("План изменился", show_alert=True)
+        return
+    day = plan.days[index]
+
+    records = []
+    for slug, item in draft.items():
+        ex = exercises.by_slug(slug)
+        if ex is None:
+            continue
+        weight = float(item.get("weight", 0))
+        reps = int(item.get("reps", progress._top_reps(profile.goal)))
+        for _ in range(int(item.get("sets", 1))):
+            records.append(progress.SetRecord(slug, weight, reps))
+
+    if not records:
+        await callback.answer("Нечего записывать", show_alert=True)
+        return
+
+    await progress.add_workout(callback.from_user.id, index, day.title, records)
+    await state.clear()
+    profile = replace(profile, day_cursor=(index + 1) % len(plan.days))
+    await profiles.save(profile)
+
+    if callback.message:
+        await callback.message.answer(
+            f"Записал: день {index + 1} · {day.title}. "
+            f"Упражнений: {len(draft)}, подходов: {len(records)}."
+        )
+        await _show_plan(callback.message, profile)
+    await callback.answer("Записано")
+
+
 @pay_router.callback_query(F.data.startswith("wk:day:"))
 async def wk_day(callback: CallbackQuery, state: FSMContext) -> None:
     try:
@@ -2299,23 +2557,25 @@ async def wk_day(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     day = plan.days[index]
-    await state.set_state(WorkoutForm.input)
-    await state.update_data(day_index=index)
+    draft = {}
+    for slot in day.slots:
+        slug = slot.exercise.slug
+        sets_history = await progress.last_sets(callback.from_user.id, slug)
+        if sets_history:
+            weight = float(sets_history[-1]["weight"])
+        else:
+            weight = planner.start_weight(profile.weight, slot.exercise)
+        draft[slug] = {
+            "sets": slot.sets,
+            "reps": progress._top_reps(profile.goal),
+            "weight": weight,
+        }
 
-    names = "\n".join(f"• {slot.exercise.name_ru}" for slot in day.slots)
+    await state.set_state(EditForm.open)
+    await state.update_data(ed_day=index, draft=draft)
     if callback.message:
         await callback.message.answer(
-            f"<b>День {index + 1}: {day.title}</b>\n\n"
-            "Если сделали всё по плану — нажмите «Всё выполнил». "
-            "Вписывать упражнения нужно только когда что-то не получилось.\n\n"
-            "Если вводите детали — по строке на упражнение:\n"
-            "<code>приседания 60x8, 60x8, 60x7</code>\n\n"
-            f"{names}\n\n"
-            "Вес можно не указывать для упражнений с весом тела: <code>отжимания 0x12, 0x10</code>\n"
-            "Для гантелей указывайте вес одной гантели: <code>жим гантелей 10x12</code>",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="✅ Всё выполнил", callback_data=f"wk:done:{index}")
-            ]]),
+            _editor_text(day, draft), reply_markup=_editor_markup(day, draft)
         )
     await callback.answer()
 

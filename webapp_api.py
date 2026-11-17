@@ -356,6 +356,8 @@ async def api_skip(request: web.Request) -> web.Response:
 
     profile = dataclasses.replace(profile, day_cursor=(day_index + 1) % len(plan.days))
     await profiles.save(profile)
+    week = await progress.week_index(user_id)
+    await progress.set_check(user_id, week, day_index, 0)
     return web.json_response({"ok": True, "next_day": profile.day_cursor})
 
 
