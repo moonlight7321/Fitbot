@@ -80,12 +80,25 @@ function renderPlan(data) {
       + '</div></div>'
     : '';
 
+  const fullWeek = data.plan.days.map((day, i) =>
+    '<div class="day" style="margin-top:8px"><h3>День ' + (i + 1) + ' · ' + esc(day.title) + '</h3>'
+    + '<ol class="list">' + day.slots.map(s =>
+        '<li>' + esc(s.name) + ' — ' + setsPhrase(s.sets, esc(s.reps))
+        + (s.weight ? ' · <b>' + esc(s.weight) + '</b>' : '') + '</li>').join('') + '</ol></div>'
+  ).join('');
+
   return deload + ''
     + '<div class="card"><h2>Ваш план</h2>'
     + '<div class="muted">' + esc(p.goal) + ' · ' + esc(p.experience) + ' · ' + esc(p.equipment) + '</div>'
     + '<div class="muted">' + p.days + ' тренировки в неделю по ' + p.minutes + ' минут</div>'
     + '<div class="muted">Ограничения: ' + esc(p.limitations) + '</div>'
-    + '<div class="days" style="margin-top:10px">' + days + '</div></div>'
+    + '<div class="days" style="margin-top:10px">' + days + '</div>'
+    + '<div class="input-row" style="margin-top:10px">'
+    + '<button class="ghost" id="skip-day">⏭ Пропустить день</button>'
+    + '<button class="ghost" id="week-toggle">📅 Вся неделя</button>'
+    + '</div>'
+    + '<div id="week-full" class="hidden">' + fullWeek + '</div>'
+    + '</div>'
     + '<div class="card"><button class="ghost" id="weight-guide-btn">❓ Как подобрать вес</button>'
     + '<div id="weight-guide" class="hidden">'
     + '<p class="muted">Штанга — около 20 % веса тела, гантели — около 10 % на руку '
@@ -337,6 +350,23 @@ function render() {
     document.getElementById("clear-diary").onclick = async () => {
       try { await api("/api/diary/clear", { method: "POST", body: "{}" }); await loadOverview(); }
       catch (e) { toast("Ошибка очистки"); }
+    };
+  }
+
+  if (state.tab === "plan" && data.plan && data.plan.days.length) {
+    const skipBtn = document.getElementById("skip-day");
+    if (skipBtn) skipBtn.onclick = async () => {
+      const dayIndex = (data.next_day === undefined || data.next_day === null) ? 0 : data.next_day;
+      try {
+        await api("/api/skip", { method: "POST", body: JSON.stringify({ day_index: dayIndex }) });
+        toast("День пропущен");
+        await loadOverview();
+      } catch (e) { toast("Не удалось пропустить"); }
+    };
+    const weekBtn = document.getElementById("week-toggle");
+    if (weekBtn) weekBtn.onclick = () => {
+      const box = document.getElementById("week-full");
+      if (box) box.classList.toggle("hidden");
     };
   }
 

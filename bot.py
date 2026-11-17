@@ -1032,6 +1032,13 @@ async def _plan_weights(user_id: int, profile: "profiles.Profile", plan, week=No
     return weights
 
 
+async def _plan_index(profile: "profiles.Profile", total: int) -> int:
+    """Текущий день: сохранённый курсор или следующий по журналу."""
+    if 0 <= profile.day_cursor < total:
+        return profile.day_cursor
+    return await progress.next_day_index(profile.user_id, total)
+
+
 def _plan_markup(index: int) -> InlineKeyboardMarkup:
     """Кнопки для текущего дня плана."""
     return InlineKeyboardMarkup(
@@ -1043,6 +1050,10 @@ def _plan_markup(index: int) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="🟡 Частично", callback_data=f"wk:part:{index}"),
                 InlineKeyboardButton(text="😕 Не смог", callback_data=f"wk:none:{index}"),
+            ],
+            [
+                InlineKeyboardButton(text="⏭ Пропустить день", callback_data=f"wk:skipday:{index}"),
+                InlineKeyboardButton(text="📅 Вся неделя", callback_data="wk:week"),
             ],
             [
                 InlineKeyboardButton(text="📈 Прогресс", callback_data="wk:report"),
@@ -1068,7 +1079,10 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
         return
 
     user_id = message.from_user.id if message.from_user else message.chat.id
-    index = await progress.next_day_index(user_id, len(plan.days))
+    index = await _plan_index(profile, len(plan.days))
+    if profile.day_cursor != index:
+        profile = replace(profile, day_cursor=index)
+        await profiles.save(profile)
     week = await progress.week_state(user_id, len(plan.days))
     weights = await _plan_weights(user_id, profile, plan, week)
     weak = {group for group, _count in await progress.weak_groups(user_id)}
@@ -1889,6 +1903,64 @@ async def cmd_history(message: Message, state: FSMContext) -> None:
     await message.answer(await _history_text(message.from_user.id))
 
 
+@pay_router.callback_query(F.data.startswith("wk:skipday:"))
+async def wk_skipday(callback: CallbackQuery) -> None:
+    try:
+        index = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный день", show_alert=True)
+        return
+    if callback.from_user is None or callback.message is None:
+        return
+
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+    plan = planner.build(profile)
+    if index < 0 or index >= len(plan.days):
+        await callback.answer("Такого дня нет", show_alert=True)
+        return
+
+    profile = replace(profile, day_cursor=(index + 1) % len(plan.days))
+    await profiles.save(profile)
+    await callback.answer(f"День {index + 1} пропущен")
+    await callback.message.answer(
+        f"День {index + 1} пропущен — записывать его не нужно. "
+        "Он останется в плане на следующем круге."
+    )
+    await _show_plan(callback.message, profile)
+
+
+@pay_router.callback_query(F.data == "wk:week")
+async def wk_week(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Доступно по подписке", show_alert=True)
+        return
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+
+    plan = planner.build(profile)
+    if not plan.days:
+        await callback.message.answer(plan.note)
+        await callback.answer()
+        return
+
+    week = await progress.week_state(callback.from_user.id, len(plan.days))
+    weights = await _plan_weights(callback.from_user.id, profile, plan, week)
+    weak = {group for group, _count in await progress.weak_groups(callback.from_user.id)}
+    breakdown = await progress.breakdown(callback.from_user.id)
+    pain = {group for group, reasons in breakdown.items() if reasons.get("pain")}
+    text = planner.render(profile, plan, weights, deload=week["deload"],
+                          weak_groups=weak, pain_groups=pain)
+    await callback.message.answer(text)
+    await callback.answer()
+
+
 @pay_router.callback_query(F.data == "wk:pick")
 async def wk_pick(callback: CallbackQuery) -> None:
     if callback.from_user is None:
@@ -2147,6 +2219,8 @@ async def wk_done(callback: CallbackQuery, state: FSMContext) -> None:
     day = plan.days[index]
     await progress.add_workout(callback.from_user.id, index, day.title, [])
     await state.clear()
+    profile = replace(profile, day_cursor=(index + 1) % len(plan.days))
+    await profiles.save(profile)
 
     # Есть ли уже история весов по упражнениям этого дня
     has_history = False
@@ -2302,6 +2376,8 @@ async def wk_input(message: Message, state: FSMContext) -> None:
         return
 
     await progress.add_workout(message.from_user.id, index, day.title, records)
+    profile = replace(profile, day_cursor=(index + 1) % len(plan.days))
+    await profiles.save(profile)
     week = await progress.week_index(message.from_user.id)
     await progress.set_check(message.from_user.id, week, index, True)
     await state.clear()

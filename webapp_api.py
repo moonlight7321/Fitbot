@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs
 
+import dataclasses
 from collections import defaultdict, deque
 
 from aiohttp import web
@@ -241,7 +242,10 @@ async def api_overview(request: web.Request) -> web.Response:
                 "partial": week["partial"],
                 "reasons": week["reasons"],
             }
-            payload["next_day"] = await progress.next_day_index(user_id, len(plan.days))
+            if 0 <= profile.day_cursor < len(plan.days):
+                payload["next_day"] = profile.day_cursor
+            else:
+                payload["next_day"] = await progress.next_day_index(user_id, len(plan.days))
             payload["plan"] = {
                 "note": plan.note,
                 "deload": week["deload"],
@@ -331,6 +335,30 @@ async def api_progress(request: web.Request) -> web.Response:
     return web.json_response(await _progress_payload(user_id))
 
 
+async def api_skip(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+
+    data = await request.json()
+    try:
+        day_index = int(data.get("day_index", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad day"}, status=400)
+
+    profile = await profiles.get(user_id)
+    if profile is None:
+        return web.json_response({"error": "no profile"}, status=400)
+    plan = planner.build(profile)
+    if day_index < 0 or day_index >= len(plan.days):
+        return web.json_response({"error": "bad day"}, status=400)
+
+    profile = dataclasses.replace(profile, day_cursor=(day_index + 1) % len(plan.days))
+    await profiles.save(profile)
+    return web.json_response({"ok": True, "next_day": profile.day_cursor})
+
+
 async def api_feel(request: web.Request) -> web.Response:
     user_id = _user_id(request)
     assert user_id is not None
@@ -379,6 +407,8 @@ async def api_workout_complete(request: web.Request) -> web.Response:
         return web.json_response({"error": "bad day"}, status=400)
 
     await progress.add_workout(user_id, day_index, plan.days[day_index].title, [])
+    profile = dataclasses.replace(profile, day_cursor=(day_index + 1) % len(plan.days))
+    await profiles.save(profile)
     state = await progress.week_state(user_id, len(plan.days))
     return web.json_response({
         "ok": True,
@@ -613,6 +643,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_post("/api/workouts", api_workout_add)
     app.router.add_post("/api/workouts/complete", api_workout_complete)
     app.router.add_post("/api/feel", api_feel)
+    app.router.add_post("/api/skip", api_skip)
     app.router.add_post("/api/checks", api_check)
     app.router.add_get("/api/exercise/{slug}", api_exercise)
     app.router.add_post("/api/diary/add", api_diary_add)

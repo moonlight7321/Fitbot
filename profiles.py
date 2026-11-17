@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     workout_days TEXT DEFAULT '',
     workout_time TEXT DEFAULT '',
     last_reminder TEXT DEFAULT '',
+    day_cursor INTEGER DEFAULT -1,
     updated_at TEXT NOT NULL
 );
 """
@@ -84,6 +85,7 @@ class Profile:
     workout_days: str = ""
     workout_time: str = ""
     last_reminder: str = ""
+    day_cursor: int = -1
 
     @property
     def weekdays(self) -> list:
@@ -144,6 +146,7 @@ def _open() -> sqlite3.Connection:
         "workout_days": "ALTER TABLE profiles ADD COLUMN workout_days TEXT DEFAULT ''",
         "workout_time": "ALTER TABLE profiles ADD COLUMN workout_time TEXT DEFAULT ''",
         "last_reminder": "ALTER TABLE profiles ADD COLUMN last_reminder TEXT DEFAULT ''",
+        "day_cursor": "ALTER TABLE profiles ADD COLUMN day_cursor INTEGER DEFAULT -1",
     }
     added = False
     for column, sql in migrations.items():
@@ -177,6 +180,11 @@ def _get_sync(user_id: int) -> Optional[Profile]:
         workout_days=((row["workout_days"] if "workout_days" in keys else "") or ""),
         workout_time=((row["workout_time"] if "workout_time" in keys else "") or ""),
         last_reminder=((row["last_reminder"] if "last_reminder" in keys else "") or ""),
+        day_cursor=(
+            int(row["day_cursor"])
+            if "day_cursor" in keys and row["day_cursor"] is not None
+            else -1
+        ),
     )
 
 
@@ -187,8 +195,8 @@ def _save_sync(profile: Profile) -> None:
             """
             INSERT INTO profiles (user_id, height, weight, experience, days, minutes,
                                   goal, equipment, limitations, sex, age, activity,
-                                  workout_days, workout_time, last_reminder, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  workout_days, workout_time, last_reminder, day_cursor, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 height = excluded.height, weight = excluded.weight,
                 experience = excluded.experience, days = excluded.days,
@@ -196,13 +204,14 @@ def _save_sync(profile: Profile) -> None:
                 equipment = excluded.equipment, limitations = excluded.limitations,
                 sex = excluded.sex, age = excluded.age, activity = excluded.activity,
                 workout_days = excluded.workout_days, workout_time = excluded.workout_time,
-                last_reminder = excluded.last_reminder,
+                last_reminder = excluded.last_reminder, day_cursor = excluded.day_cursor,
                 updated_at = excluded.updated_at
             """,
             (profile.user_id, profile.height, profile.weight, profile.experience,
              profile.days, profile.minutes, profile.goal, profile.equipment,
              profile.limitations, profile.sex, profile.age, profile.activity,
-             profile.workout_days, profile.workout_time, profile.last_reminder, _now()),
+             profile.workout_days, profile.workout_time, profile.last_reminder,
+             profile.day_cursor, _now()),
         )
         conn.commit()
     finally:
