@@ -179,25 +179,32 @@ def build(profile: "prof.Profile") -> Plan:
     return Plan(days=days, note=note)
 
 
-def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None) -> str:
+def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
+           deload: bool = False) -> str:
     lines = [
         "<b>Ваш план на неделю</b>",
         f"{profile.goal_title} · {profile.experience_title} · {profile.equipment_title}",
         f"{profile.days} тренировки(и) в неделю по {profile.minutes} минут",
         f"Ограничения: {profile.limitations_title}",
-        "",
     ]
+    if deload:
+        lines.append(
+            "🟢 <b>Разгрузочная неделя</b>: подходов меньше, вес тот же — "
+            "так уходит накопленная усталость."
+        )
+    lines.append("")
     for index, day in enumerate(plan.days, 1):
         lines.append(f"<b>День {index} · {day.title}</b>")
         if not day.slots:
             lines.append("— упражнений не нашлось")
         for n, slot in enumerate(day.slots, 1):
+            sets_text = max(2, slot.sets // 2) if deload else slot.sets
             suffix = ""
             if weights:
                 label = weights.get(slot.exercise.slug)
                 if label:
                     suffix = f" · <b>{label}</b>"
-            lines.append(f"{n}. {slot.exercise.name_ru} — {slot.sets}×{slot.reps}{suffix}")
+            lines.append(f"{n}. {slot.exercise.name_ru} — {sets_text}×{slot.reps}{suffix}")
         lines.append("")
     lines.append(f"<i>{plan.note}</i>")
     return "\n".join(lines)

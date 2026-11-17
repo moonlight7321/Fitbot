@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS workout_sets (
     weight     REAL NOT NULL,
     reps       INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS workout_checks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    week       INTEGER NOT NULL,
+    day_index  INTEGER NOT NULL,
+    done       INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (user_id, week, day_index)
+);
 CREATE INDEX IF NOT EXISTS idx_workouts_user ON workouts (user_id, done_on);
 CREATE INDEX IF NOT EXISTS idx_sets_workout ON workout_sets (workout_id);
 """
@@ -100,6 +109,15 @@ def _add_sync(user_id: int, day_index: int, day_title: str,
                 "INSERT INTO workout_sets (workout_id, slug, set_no, weight, reps) VALUES (?, ?, ?, ?, ?)",
                 (workout_id, record.slug, counters[record.slug], record.weight, record.reps),
             )
+
+        # Записанная тренировка = выполненная: отметка нужна для разгрузки
+        week = _week_index_sync(user_id)
+        conn.execute(
+            """INSERT INTO workout_checks (user_id, week, day_index, done, created_at)
+               VALUES (?, ?, ?, 1, ?)
+               ON CONFLICT(user_id, week, day_index) DO UPDATE SET done = 1""",
+            (user_id, week, day_index, now.strftime("%Y-%m-%dT%H:%M:%S")),
+        )
         conn.commit()
         return workout_id
     finally:
@@ -139,6 +157,96 @@ def _history_sync(user_id: int, days: int) -> List[sqlite3.Row]:
         conn.close()
 
 
+def _first_date_sync(user_id: int):
+    conn = _open()
+    try:
+        row = conn.execute(
+            "SELECT MIN(done_on) AS first FROM workouts WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return row["first"] if row and row["first"] else None
+    finally:
+        conn.close()
+
+
+def _week_index_sync(user_id: int) -> int:
+    first = _first_date_sync(user_id)
+    if not first:
+        return 1
+    try:
+        start = datetime.strptime(first, "%Y-%m-%d").date()
+    except ValueError:
+        return 1
+    today = datetime.now(TIMEZONE).date()
+    return max(1, (today - start).days // 7 + 1)
+
+
+def _week_bounds_sync(user_id: int):
+    first = _first_date_sync(user_id)
+    today = datetime.now(TIMEZONE).date()
+    if not first:
+        return 1, today - timedelta(days=6)
+    start = datetime.strptime(first, "%Y-%m-%d").date()
+    index = max(1, (today - start).days // 7 + 1)
+    return index, start + timedelta(days=7 * (index - 1))
+
+
+def _week_done_days_sync(user_id: int, start) -> set:
+    start_str = start.strftime("%Y-%m-%d")
+    end_str = (start + timedelta(days=7)).strftime("%Y-%m-%d")
+    conn = _open()
+    try:
+        rows = conn.execute(
+            """SELECT DISTINCT day_index FROM workouts
+               WHERE user_id = ? AND done_on >= ? AND done_on < ?""",
+            (user_id, start_str, end_str),
+        ).fetchall()
+        return {int(r["day_index"]) for r in rows}
+    finally:
+        conn.close()
+
+
+def _checks_sync(user_id: int, week: int):
+    conn = _open()
+    try:
+        rows = conn.execute(
+            "SELECT day_index, done FROM workout_checks WHERE user_id = ? AND week = ?",
+            (user_id, week),
+        ).fetchall()
+        return {int(r["day_index"]): bool(r["done"]) for r in rows}
+    finally:
+        conn.close()
+
+
+def _set_check_sync(user_id: int, week: int, day_index: int, done: bool) -> None:
+    conn = _open()
+    try:
+        conn.execute(
+            """INSERT INTO workout_checks (user_id, week, day_index, done, created_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, week, day_index) DO UPDATE SET done = excluded.done""",
+            (user_id, week, day_index, 1 if done else 0,
+             datetime.now(TIMEZONE).strftime("%Y-%m-%dT%H:%M:%S")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _series_sync(user_id: int, slug: str, days: int):
+    since = (datetime.now(TIMEZONE) - timedelta(days=days)).strftime("%Y-%m-%d")
+    conn = _open()
+    try:
+        return conn.execute(
+            """SELECT w.done_on, MAX(ws.weight) AS weight, MAX(ws.reps) AS reps
+               FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
+               WHERE w.user_id = ? AND ws.slug = ? AND w.done_on >= ?
+               GROUP BY w.done_on ORDER BY w.done_on ASC""",
+            (user_id, slug, since),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
 def _count_sync(user_id: int) -> int:
     conn = _open()
     try:
@@ -163,6 +271,58 @@ async def history(user_id: int, days: int = 28):
 
 async def count(user_id: int) -> int:
     return await asyncio.to_thread(_count_sync, user_id)
+
+
+async def week_index(user_id: int) -> int:
+    return await asyncio.to_thread(_week_index_sync, user_id)
+
+
+async def week_bounds(user_id: int):
+    return await asyncio.to_thread(_week_bounds_sync, user_id)
+
+
+async def checks(user_id: int, week: int) -> dict:
+    return await asyncio.to_thread(_checks_sync, user_id, week)
+
+
+async def week_done_days(user_id: int, start) -> set:
+    return await asyncio.to_thread(_week_done_days_sync, user_id, start)
+
+
+async def set_check(user_id: int, week: int, day_index: int, done: bool) -> None:
+    await asyncio.to_thread(_set_check_sync, user_id, week, day_index, done)
+
+
+async def series(user_id: int, slug: str, days: int = 56):
+    return await asyncio.to_thread(_series_sync, user_id, slug, days)
+
+
+def _deload_reasons(week: int, checks: dict, done_days: set, planned: int) -> list:
+    reasons = []
+    if week % 4 == 0 and week > 0:
+        reasons.append("плановая разгрузка")
+    # Пропуск — только день, который отмечен «не смог» и не записан в журнале
+    misses = [day for day, done in checks.items() if not done and day not in done_days]
+    if len(misses) >= 2:
+        reasons.append("две пропущенные тренировки")
+    return reasons
+
+
+async def week_state(user_id: int, planned_days: int) -> dict:
+    """Неделя: номер, отметки, пропуски и нужна ли разгрузка."""
+    week, start = await week_bounds(user_id)
+    marks = await checks(user_id, week)
+    done_days = await week_done_days(user_id, start)
+    reasons = _deload_reasons(week, marks, done_days, planned_days)
+    return {
+        "week": week,
+        "start": start,
+        "checks": marks,
+        "done": len(done_days),
+        "planned": planned_days,
+        "deload": bool(reasons),
+        "reasons": reasons,
+    }
 
 
 def _top_reps(goal: str) -> int:

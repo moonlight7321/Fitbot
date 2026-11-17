@@ -71,7 +71,14 @@ function renderPlan(data) {
             + (s.weight ? ' · <b>' + esc(s.weight) + '</b>' : '') + '</li>').join('') + '</ol></div>').join('')
     : '<p class="muted">Упражнений не нашлось под текущие условия.</p>';
 
-  return ''
+  const deload = data.week && data.week.deload
+    ? '<div class="card deload"><b>🟢 Разгрузочная неделя</b>'
+      + '<div class="muted">Подходов меньше, вес тот же — так уходит накопленная усталость.'
+      + (data.week.reasons && data.week.reasons.length ? ' Причина: ' + esc(data.week.reasons.join(', ')) : '')
+      + '</div></div>'
+    : '';
+
+  return deload + ''
     + '<div class="card"><h2>Ваш план</h2>'
     + '<div class="muted">' + esc(p.goal) + ' · ' + esc(p.experience) + ' · ' + esc(p.equipment) + '</div>'
     + '<div class="muted">' + p.days + ' тренировки в неделю по ' + p.minutes + ' минут</div>'
@@ -97,6 +104,26 @@ function renderJournal(data) {
     + '<div id="wk-result" class="muted" style="margin-top:8px"></div></div>';
 }
 
+function sparkline(series) {
+  const points = series.points || [];
+  if (points.length < 2) return '';
+  const w = 300, h = 90, pad = 10;
+  const values = points.map(p => p.weight);
+  const min = Math.min.apply(null, values);
+  const max = Math.max.apply(null, values);
+  const span = max - min || 1;
+  const step = (w - 2 * pad) / (points.length - 1);
+  const coords = points.map((p, i) =>
+    (pad + i * step).toFixed(1) + ',' + (h - pad - ((p.weight - min) / span) * (h - 2 * pad)).toFixed(1)
+  ).join(' ');
+  return ''
+    + '<div class="chart">'
+    + '<div class="muted">' + esc(series.name) + ' · ' + min + ' → ' + max + ' кг</div>'
+    + '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">'
+    + '<polyline points="' + coords + '" fill="none" stroke="#4f8cff" stroke-width="2.5" />'
+    + '</svg></div>';
+}
+
 function renderProgress(data) {
   const progress = data.progress;
   if (!progress) return '';
@@ -116,6 +143,7 @@ function renderProgress(data) {
     + '<div class="muted">Тренировок записано: ' + progress.count + '</div>'
     + (items ? '<ul class="list" style="margin-top:8px">' + items + '</ul>'
              : '<p class="muted">Пока пусто — запишите первую тренировку.</p>')
+    + (progress.series || []).map(sparkline).join('')
     + '</div>';
 }
 

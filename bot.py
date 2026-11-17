@@ -1003,7 +1003,10 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
         return
     markup = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Записать тренировку", callback_data="wk:pick")],
+            [
+                InlineKeyboardButton(text="✅ Записать тренировку", callback_data="wk:pick"),
+                InlineKeyboardButton(text="😕 Не смог", callback_data="wk:skip"),
+            ],
             [
                 InlineKeyboardButton(text="📈 Прогресс", callback_data="wk:report"),
                 InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit"),
@@ -1011,8 +1014,12 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
             [InlineKeyboardButton(text="🏋️ Упражнения", callback_data="ex:back")],
         ]
     )
-    weights = await _plan_weights(message.chat.id, profile, plan)
-    await message.answer(planner.render(profile, plan, weights), reply_markup=markup)
+    user_id = message.from_user.id if message.from_user else message.chat.id
+    weights = await _plan_weights(user_id, profile, plan)
+    week = await progress.week_state(user_id, len(plan.days))
+    await message.answer(
+        planner.render(profile, plan, weights, deload=week["deload"]), reply_markup=markup
+    )
 
 
 async def _start_profile(message: Message, state: FSMContext) -> None:
@@ -1584,7 +1591,11 @@ async def _progress_report(user_id: int) -> str:
     for row in rows:
         grouped.setdefault(row["slug"], []).append(row)
 
-    lines = [f"<b>Прогресс</b>\nТренировок записано: {total}\n"]
+    week = await progress.week_state(user_id, 0)
+    header = f"<b>Прогресс</b>\nТренировок записано: {total}"
+    if week["done"]:
+        header += f"\nНа этой неделе отмечено: {week['done']}"
+    lines = [header + "\n"]
     items = []
     for slug, history in grouped.items():
         ex = exercises.by_slug(slug)
@@ -1649,6 +1660,62 @@ async def wk_pick(callback: CallbackQuery) -> None:
         await callback.message.answer(
             "Какой день записываем?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
         )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data == "wk:skip")
+async def wk_skip(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Доступно по подписке", show_alert=True)
+        return
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+
+    plan = planner.build(profile)
+    rows = [
+        [InlineKeyboardButton(text=f"День {i + 1} · {day.title}", callback_data=f"wk:none:{i}")]
+        for i, day in enumerate(plan.days)
+    ]
+    if callback.message:
+        await callback.message.answer(
+            "Какой день пропустили?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("wk:none:"))
+async def wk_skip_day(callback: CallbackQuery) -> None:
+    try:
+        index = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный день", show_alert=True)
+        return
+    if callback.from_user is None:
+        return
+
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+
+    plan = planner.build(profile)
+    if index < 0 or index >= len(plan.days):
+        await callback.answer("Такого дня нет", show_alert=True)
+        return
+
+    week = await progress.week_index(callback.from_user.id)
+    await progress.set_check(callback.from_user.id, week, index, False)
+    state = await progress.week_state(callback.from_user.id, len(plan.days))
+
+    text = f"Отметил: день {index + 1} пропущен."
+    if state["deload"]:
+        text += "\nЭта неделя будет разгрузочной — нагрузка снизится, вес останется."
+    if callback.message:
+        await callback.message.answer(text)
     await callback.answer()
 
 
@@ -1743,6 +1810,8 @@ async def wk_input(message: Message, state: FSMContext) -> None:
         return
 
     await progress.add_workout(message.from_user.id, index, day.title, records)
+    week = await progress.week_index(message.from_user.id)
+    await progress.set_check(message.from_user.id, week, index, True)
     await state.clear()
 
     lines = [f"<b>Записано: день {index + 1} · {day.title}</b>", ""]

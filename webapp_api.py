@@ -141,14 +141,24 @@ async def api_overview(request: web.Request) -> web.Response:
                     step = progress.next_plan(profile.goal, slot.exercise.equipment, sets)
                     weights[slug] = "вес тела" if step["bodyweight"] else f"{step['weight']:g} кг"
 
+            week = await progress.week_state(user_id, len(plan.days))
+            payload["week"] = {
+                "number": week["week"],
+                "done": week["done"],
+                "planned": week["planned"],
+                "deload": week["deload"],
+                "reasons": week["reasons"],
+            }
             payload["plan"] = {
                 "note": plan.note,
+                "deload": week["deload"],
                 "days": [
                     {
                         "title": day.title,
                         "slots": [
                             {"slug": s.exercise.slug, "name": s.exercise.name_ru,
-                             "sets": s.sets, "reps": s.reps, "weight": weights.get(s.exercise.slug)}
+                             "sets": max(2, s.sets // 2) if week["deload"] else s.sets,
+                             "reps": s.reps, "weight": weights.get(s.exercise.slug)}
                             for s in day.slots
                         ],
                     }
@@ -190,7 +200,22 @@ async def _progress_payload(user_id: int) -> dict:
             "last_date": history[-1]["done_on"],
         })
     items.sort(key=lambda x: x["delta"], reverse=True)
-    return {"count": await progress.count(user_id), "items": items[:12]}
+
+    # Ряды для графиков: по три упражнения с историей
+    series = []
+    for item in items[:3]:
+        if item["last"] <= 0:
+            continue
+        points = await progress.series(user_id, item["slug"], 56)
+        series.append({
+            "slug": item["slug"],
+            "name": item["name"],
+            "points": [
+                {"date": p["done_on"], "weight": float(p["weight"])} for p in points
+            ],
+        })
+
+    return {"count": await progress.count(user_id), "items": items[:12], "series": series}
 
 
 async def api_progress(request: web.Request) -> web.Response:
@@ -258,6 +283,37 @@ async def api_workout_add(request: web.Request) -> web.Response:
     return web.json_response({
         "added": len(records), "errors": errors, "advice": advice,
         "progress": await _progress_payload(user_id),
+    })
+
+
+async def api_check(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+
+    data = await request.json()
+    try:
+        day_index = int(data.get("day_index", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad day"}, status=400)
+    done = bool(data.get("done", False))
+
+    profile = await profiles.get(user_id)
+    if profile is None:
+        return web.json_response({"error": "no profile"}, status=400)
+    plan = planner.build(profile)
+    if day_index < 0 or day_index >= len(plan.days):
+        return web.json_response({"error": "bad day"}, status=400)
+
+    week = await progress.week_index(user_id)
+    await progress.set_check(user_id, week, day_index, done)
+    state = await progress.week_state(user_id, len(plan.days))
+    return web.json_response({
+        "week": {
+            "number": state["week"], "done": state["done"], "planned": state["planned"],
+            "deload": state["deload"], "reasons": state["reasons"],
+        }
     })
 
 
@@ -363,6 +419,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_get("/api/exercises", api_exercises)
     app.router.add_get("/api/progress", api_progress)
     app.router.add_post("/api/workouts", api_workout_add)
+    app.router.add_post("/api/checks", api_check)
     app.router.add_get("/api/exercise/{slug}", api_exercise)
     app.router.add_post("/api/diary/add", api_diary_add)
     app.router.add_post("/api/diary/clear", api_diary_clear)
