@@ -196,6 +196,7 @@ async def api_overview(request: web.Request) -> web.Response:
         "diary": {"totals": diary.totals(rows), "items": rows[-20:]} if access else None,
         "diary_history": diary_history,
         "foods": sorted(food.name for food in diary.FOODS),
+        "build": _build_stamp(),
         "progress": None,
         "profile_raw": None,
         "options": {
@@ -380,6 +381,15 @@ async def api_alternatives(request: web.Request) -> web.Response:
         if ex.slug != slug and planner._allowed(ex, profile.experience, profile.equipment, excluded)
     ][:8]
     return web.json_response({"items": items})
+
+
+def _build_stamp() -> str:
+    try:
+        import datetime as _dt
+        stamp = (WEBAPP_DIR / "app.js").stat().st_mtime
+        return _dt.datetime.fromtimestamp(stamp).strftime("%d.%m %H:%M")
+    except OSError:
+        return "?"
 
 
 def _weight_cap(exercise) -> float:

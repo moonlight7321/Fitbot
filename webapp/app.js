@@ -1,6 +1,10 @@
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
 
+window.addEventListener("error", event => {
+  try { toast("Ошибка: " + (event.message || "неизвестная")); } catch (e) { /* ignore */ }
+});
+
 const state = { overview: null, exercises: null, tab: "plan", period: 30 };
 
 function headers() {
@@ -100,17 +104,17 @@ function profileFormCard(data, opts) {
   const draft = data.profile_raw ? {} : loadDraft();
   const raw = Object.assign({}, draft, data.profile_raw || {});
   const opt = data.options || {};
-  const hidden = (data.profile_raw && !options.forceOpen) ? ' hidden' : '';
-  const toggle = options.hideToggle ? '' : '<button class="ghost" id="profile-toggle">⚙️ Анкета и расчёт</button>';
-  const saveLabel = options.hideToggle ? 'Сохранить анкету' : 'Сохранить и рассчитать';
+  const isOpen = Boolean(options.forceOpen) || !data.profile_raw;
+  const summary = options.hideToggle ? '' : '<summary class="ghost">⚙️ Анкета и расчёт</summary>';
+  const saveLabel = 'Сохранить и рассчитать';
   const limits = (raw.limitations || []);
   const limitBoxes = Object.keys(opt.limitations || {}).map(key =>
     '<label class="chk"><input type="checkbox" value="' + esc(key) + '"'
     + (limits.indexOf(key) >= 0 ? ' checked' : '') + '> ' + esc(opt.limitations[key]) + '</label>').join('');
 
   return ''
-    + '<div class="card">' + toggle
-    + '<div id="profile-form"' + hidden + '>'
+    + '<div class="card"><details id="profile-form"' + (isOpen ? ' open' : '') + '>'
+    + summary
     + '<div class="muted" style="margin-top:8px">Заполните один раз — план и калории посчитаются сразу.</div>'
     + '<label class="field">Цель<select id="pf-goal" class="select">' + optionsHtml(opt.goals, raw.goal || 'tone') + '</select></label>'
     + '<label class="field">Опыт<select id="pf-exp" class="select">' + optionsHtml(opt.experience, raw.experience || 'novice') + '</select></label>'
@@ -130,7 +134,7 @@ function profileFormCard(data, opts) {
     + '</div>'
     + '<div class="muted" style="margin-top:8px">Ограничения:</div><div class="chips">' + limitBoxes + '</div>'
     + '<button class="primary" id="profile-save" style="margin-top:10px">' + saveLabel + '</button>'
-    + '</div></div>';
+    + '</details></div>';
 }
 
 function paywallCard(title, data) {
@@ -462,6 +466,28 @@ function renderExercises() {
     + '</div></div>').join('');
 }
 
+function caloriesCard(data) {
+  const c = data.calories;
+  if (!c) {
+    return '<div class="card"><h2>Калории</h2><p class="muted">'
+      + 'Заполните пол, возраст и активность в анкете — расчёт появится здесь.</p></div>';
+  }
+  const eaten = (data.diary && data.diary.totals.kcal) || 0;
+  const left = c.target - eaten;
+  return ''
+    + '<div class="card"><h2>Калории</h2>'
+    + '<div class="muted">Обмен: ' + c.bmr + ' ккал · с активностью: ' + c.tdee + ' ккал</div>'
+    + '<div class="row"><span>Норма</span><b>' + c.target + ' ккал</b></div>'
+    + '<div class="row"><span>Съедено</span><b>' + Math.round(eaten) + ' ккал</b></div>'
+    + '<div class="row"><span>' + (left >= 0 ? 'Осталось' : 'Перебор') + '</span><b>'
+    + Math.abs(Math.round(left)) + ' ккал</b></div>'
+    + '<div class="macros">'
+    + '<div class="macro"><b>' + c.protein + '</b><span>белки, г</span></div>'
+    + '<div class="macro"><b>' + c.fat + '</b><span>жиры, г</span></div>'
+    + '<div class="macro"><b>' + c.carbs + '</b><span>углеводы, г</span></div>'
+    + '</div></div>';
+}
+
 function renderDiary(data) {
   if (!data.access || !data.diary) return paywallCard("Дневник", data);
   const totals = data.diary.totals;
@@ -470,7 +496,7 @@ function renderDiary(data) {
   const list = items.slice().reverse().map(row =>
     '<li>' + esc(row.name) + ' ' + Math.round(row.grams) + ' г — ' + Math.round(row.kcal) + ' ккал</li>').join('');
 
-  return ''
+  return caloriesCard(data) + ''
     + '<div class="card"><h2>Дневник</h2>'
     + '<div class="row"><span>Съедено</span><b>' + Math.round(totals.kcal) + ' ккал</b></div>'
     + (target ? '<div class="muted">Норма ' + target + ' ккал · осталось ' + Math.round(target - totals.kcal) + '</div>'
@@ -480,7 +506,10 @@ function renderDiary(data) {
     + '<div class="macro"><b>' + Math.round(totals.fat) + '</b><span>жиры</span></div>'
     + '<div class="macro"><b>' + Math.round(totals.carbs) + '</b><span>углеводы</span></div>'
     + '</div>'
-    + '<div class="input-row"><input id="meal" type="text" placeholder="курица 150 г, рис 200 г" />'
+    + '<datalist id="food-names">'
+    + (data.foods || []).map(name => '<option value="' + esc(name) + '"></option>').join('')
+    + '</datalist>'
+    + '<div class="input-row"><input id="meal" type="text" list="food-names" placeholder="курица 150 г, рис 200 г" />'
     + '<button class="primary" id="add-meal">Добавить</button></div>'
     + (list ? '<ul class="list" style="margin-top:10px">' + list + '</ul>' : '<p class="muted">Пока пусто.</p>')
     + '<button class="ghost" id="clear-diary" style="margin-top:10px">Очистить день</button>'
@@ -585,6 +614,9 @@ function render() {
 
   if (!data) { view.innerHTML = '<div class="card"><p class="muted">Загрузка…</p></div>'; return; }
 
+  const buildEl = document.getElementById("build");
+  if (buildEl && data.build) buildEl.textContent = "v" + data.build;
+
   // Пока анкеты нет — показываем только её, без остальных вкладок
   if (!data.profile_raw) {
     if (tabs) tabs.classList.add("hidden");
@@ -605,7 +637,7 @@ function render() {
   else if (state.tab === "exercises") view.innerHTML = renderExercises();
   else if (state.tab === "diary") view.innerHTML = renderDiary(data);
   else if (state.tab === "progress") view.innerHTML = renderProgressTab(data);
-  else view.innerHTML = renderCalories(data);
+  else view.innerHTML = renderDiary(data);
 
   if (state.tab === "diary" && data.access && data.diary) {
     const foodFilter = document.getElementById("food-filter");
@@ -847,14 +879,6 @@ document.querySelectorAll(".tab").forEach(tab => {
     render();
     if (state.tab === "exercises" && !state.exercises) loadExercises();
   };
-});
-
-document.addEventListener("click", event => {
-  const target = event.target;
-  if (target && target.id === "profile-toggle") {
-    const form = document.getElementById("profile-form");
-    if (form) form.classList.toggle("hidden");
-  }
 });
 
 loadOverview().catch(() => {

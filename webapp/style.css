@@ -67,6 +67,8 @@ body {
 .field { display: block; margin-top: 8px; font-size: 12px; color: var(--muted); }
 .chk { display: inline-flex; align-items: center; gap: 6px; margin: 4px 10px 4px 0; font-size: 13px; color: var(--text); }
 .chips { margin-top: 4px; }
+summary.ghost { display: inline-block; margin-bottom: 4px; }
+summary::-webkit-details-marker { display: none; }
 .food-list { display: flex; flex-wrap: wrap; gap: 4px; max-height: 220px; overflow-y: auto; }
 .food-item { font-size: 12px; padding: 6px 8px; }
 .select, .textarea {
