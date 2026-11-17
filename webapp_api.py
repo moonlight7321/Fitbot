@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs
 
+from collections import defaultdict, deque
+
 from aiohttp import web
 
 import calories
@@ -30,6 +32,54 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 WEBAPP_DIR = BASE_DIR / "webapp"
 MAX_AUTH_AGE = 24 * 60 * 60  # initData живёт сутки
+
+# Ограничение частоты: (сколько запросов, за сколько секунд)
+RATE_WRITE = (12, 60)
+RATE_READ = (90, 60)
+_RATE_BUCKETS: dict = defaultdict(deque)
+RATE_CLEANUP_EVERY = 500
+_rate_calls = 0
+
+
+def _rate_key(request: web.Request, kind: str):
+    user = request.get("tg_user") or {}
+    return (int(user.get("id", 0)) or request.remote, kind)
+
+
+def _check_rate(request: web.Request, kind: str) -> bool:
+    global _rate_calls
+    limit, window = RATE_WRITE if kind == "write" else RATE_READ
+    key = _rate_key(request, kind)
+    now = time.monotonic()
+    bucket = _RATE_BUCKETS[key]
+
+    while bucket and now - bucket[0] > window:
+        bucket.popleft()
+    if len(bucket) >= limit:
+        return False
+    bucket.append(now)
+
+    _rate_calls += 1
+    if _rate_calls % RATE_CLEANUP_EVERY == 0:
+        for stale in [k for k, v in _RATE_BUCKETS.items() if not v]:
+            _RATE_BUCKETS.pop(stale, None)
+    return True
+
+
+@web.middleware
+async def rate_limit(request: web.Request, handler):
+    """Простой лимит в памяти: 12 записей и 90 чтений в минуту на пользователя."""
+    if request.path.startswith(("/static/", "/media/")) or request.path == "/":
+        return await handler(request)
+
+    kind = "write" if request.method in ("POST", "PUT", "PATCH", "DELETE") else "read"
+    if not _check_rate(request, kind):
+        return web.json_response(
+            {"error": "too many requests"},
+            status=429,
+            headers={"Retry-After": "30"},
+        )
+    return await handler(request)
 
 
 def validate_init_data(init_data: str, bot_token: str) -> Optional[dict]:
@@ -270,6 +320,8 @@ async def api_workout_add(request: web.Request) -> web.Response:
     except (TypeError, ValueError):
         return web.json_response({"error": "bad day"}, status=400)
     text = str(data.get("text", ""))
+    if len(text) > 2000:
+        return web.json_response({"error": "too long"}, status=400)
 
     profile = await profiles.get(user_id)
     if profile is None:
@@ -355,7 +407,9 @@ async def api_check(request: web.Request) -> web.Response:
     await progress.set_check(user_id, week, day_index, value)
 
     slugs = data.get("slugs") or []
-    reason = str(data.get("reason", "")).strip()
+    if isinstance(slugs, list) and len(slugs) > 20:
+        slugs = slugs[:20]
+    reason = str(data.get("reason", "")).strip()[:32]
     if value == 2 and isinstance(slugs, list) and slugs:
         await progress.add_failures(
             user_id, week, day_index,
@@ -417,6 +471,8 @@ async def api_diary_add(request: web.Request) -> web.Response:
     text = str(data.get("text", "")).strip()
     if not text:
         return web.json_response({"error": "empty"}, status=400)
+    if len(text) > 1000:
+        return web.json_response({"error": "too long"}, status=400)
 
     import re
 
@@ -462,7 +518,8 @@ async def index(request: web.Request) -> web.StreamResponse:
 
 
 def create_app(settings: Settings) -> web.Application:
-    app = web.Application(middlewares=[telegram_auth])
+    # telegram_auth первым: лимит считается по пользователю из подписи
+    app = web.Application(middlewares=[telegram_auth, rate_limit])
     app["bot_token"] = settings.telegram_token
     app.router.add_get("/", index)
     app.router.add_static("/static/", WEBAPP_DIR, show_index=False)
