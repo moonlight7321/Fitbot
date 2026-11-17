@@ -1032,41 +1032,53 @@ async def _plan_weights(user_id: int, profile: "profiles.Profile", plan, week=No
     return weights
 
 
+def _plan_markup(index: int) -> InlineKeyboardMarkup:
+    """Кнопки для текущего дня плана."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Выполнил", callback_data=f"wk:done:{index}"),
+                InlineKeyboardButton(text="✍️ Детали", callback_data=f"wk:day:{index}"),
+            ],
+            [
+                InlineKeyboardButton(text="🟡 Частично", callback_data=f"wk:part:{index}"),
+                InlineKeyboardButton(text="😕 Не смог", callback_data=f"wk:none:{index}"),
+            ],
+            [
+                InlineKeyboardButton(text="📈 Прогресс", callback_data="wk:report"),
+                InlineKeyboardButton(text="📅 История", callback_data="wk:history"),
+            ],
+            [
+                InlineKeyboardButton(text="📋 Детали", callback_data="wk:details"),
+                InlineKeyboardButton(text="❓ Как подобрать вес", callback_data="guide:weight"),
+            ],
+            [
+                InlineKeyboardButton(text="⏰ Напоминания", callback_data="rm:menu"),
+                InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit"),
+            ],
+        ]
+    )
+
+
 async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
+    """Показывает только следующий день: план выдаётся по одному шагу."""
     plan = planner.build(profile)
     if not plan.days:
         await message.answer(plan.note)
         return
-    markup = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Записать тренировку", callback_data="wk:pick"),
-                InlineKeyboardButton(text="🟡 Частично", callback_data="wk:part"),
-            ],
-            [InlineKeyboardButton(text="😕 Не смог", callback_data="wk:skip")],
-            [
-                InlineKeyboardButton(text="📈 Прогресс", callback_data="wk:report"),
-                InlineKeyboardButton(text="⏰ Напоминания", callback_data="rm:menu"),
-            ],
-            [
-                InlineKeyboardButton(text="📅 История", callback_data="wk:history"),
-                InlineKeyboardButton(text="📋 Детали", callback_data="wk:details"),
-            ],
-            [InlineKeyboardButton(text="❓ Как подобрать вес", callback_data="guide:weight")],
-            [InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit")],
-            [InlineKeyboardButton(text="🏋️ Упражнения", callback_data="ex:back")],
-        ]
-    )
+
     user_id = message.from_user.id if message.from_user else message.chat.id
+    index = await progress.next_day_index(user_id, len(plan.days))
     week = await progress.week_state(user_id, len(plan.days))
     weights = await _plan_weights(user_id, profile, plan, week)
     weak = {group for group, _count in await progress.weak_groups(user_id)}
     breakdown = await progress.breakdown(user_id)
     pain = {group for group, reasons in breakdown.items() if reasons.get("pain")}
+
     await message.answer(
         planner.render(profile, plan, weights, deload=week["deload"],
-                       weak_groups=weak, pain_groups=pain),
-        reply_markup=markup,
+                       weak_groups=weak, pain_groups=pain, only_day=index),
+        reply_markup=_plan_markup(index),
     )
 
 
@@ -2158,6 +2170,7 @@ async def wk_done(callback: CallbackQuery, state: FSMContext) -> None:
             )
         text += "\n\nКак прошло? Это подскажет, повышать ли вес."
         await callback.message.answer(text, reply_markup=feel_kb)
+        await _show_plan(callback.message, profile)
     await callback.answer("Записано")
 
 
@@ -2309,6 +2322,7 @@ async def wk_input(message: Message, state: FSMContext) -> None:
         lines.append("<i>Пропущено: " + "; ".join(errors[:3]) + "</i>")
 
     await message.answer("\n".join(lines))
+    await _show_plan(message, profile)
 
 
 # ---------------------------------------------------------------------------

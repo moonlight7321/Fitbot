@@ -231,11 +231,11 @@ def format_weight(weight: float, equipment: str) -> str:
 
 def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
            deload: bool = False, weak_groups: set | None = None,
-           pain_groups: set | None = None) -> str:
+           pain_groups: set | None = None, only_day: int | None = None) -> str:
     """weights: slug -> {"label": "по 10 кг", "reps": 10 или None}."""
 
     lines = [
-        "<b>Ваш план на неделю</b>",
+        "<b>Ваш план</b>" if only_day is not None else "<b>Ваш план на неделю</b>",
         f"{profile.goal_title} · {profile.experience_title} · {profile.equipment_title}",
         f"{profile.days} тренировки(и) в неделю по {profile.minutes} минут",
         f"Ограничения: {profile.limitations_title}",
@@ -246,8 +246,15 @@ def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
             "так уходит накопленная усталость."
         )
     lines.append("")
-    for index, day in enumerate(plan.days, 1):
-        lines.append(f"<b>День {index} · {day.title}</b>")
+    days = list(enumerate(plan.days, 1))
+    if only_day is not None and 0 <= only_day < len(plan.days):
+        days = [(only_day + 1, plan.days[only_day])]
+
+    for index, day in days:
+        if only_day is not None:
+            lines.append(f"<b>День {index} из {len(plan.days)} · {day.title}</b>")
+        else:
+            lines.append(f"<b>День {index} · {day.title}</b>")
         if not day.slots:
             lines.append("— упражнений не нашлось")
         for n, slot in enumerate(day.slots, 1):

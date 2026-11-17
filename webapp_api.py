@@ -241,6 +241,7 @@ async def api_overview(request: web.Request) -> web.Response:
                 "partial": week["partial"],
                 "reasons": week["reasons"],
             }
+            payload["next_day"] = await progress.next_day_index(user_id, len(plan.days))
             payload["plan"] = {
                 "note": plan.note,
                 "deload": week["deload"],

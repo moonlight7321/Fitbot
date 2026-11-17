@@ -63,12 +63,14 @@ function renderPlan(data) {
     return '<div class="card"><h2>План</h2><p class="muted">Анкета ещё не заполнена. Откройте бота и нажмите «📋 Мой план».</p></div>';
   }
   const p = data.profile;
-  const days = data.plan && data.plan.days.length
-    ? data.plan.days.map((day, i) => ''
-        + '<div class="day"><h3>День ' + (i + 1) + ' · ' + esc(day.title) + '</h3>'
-        + '<ol class="list">' + day.slots.map(s =>
-            '<li>' + esc(s.name) + ' — ' + setsPhrase(s.sets, esc(s.reps))
-            + (s.weight ? ' · <b>' + esc(s.weight) + '</b>' : '') + '</li>').join('') + '</ol></div>').join('')
+  const nextIndex = (data.next_day === undefined || data.next_day === null) ? 0 : data.next_day;
+  const currentDay = data.plan && data.plan.days.length ? data.plan.days[nextIndex] : null;
+  const days = currentDay
+    ? '<div class="day"><h3>День ' + (nextIndex + 1) + ' из ' + data.plan.days.length
+      + ' · ' + esc(currentDay.title) + '</h3>'
+      + '<ol class="list">' + currentDay.slots.map(s =>
+          '<li>' + esc(s.name) + ' — ' + setsPhrase(s.sets, esc(s.reps))
+          + (s.weight ? ' · <b>' + esc(s.weight) + '</b>' : '') + '</li>').join('') + '</ol></div>'
     : '<p class="muted">Упражнений не нашлось под текущие условия.</p>';
 
   const deload = data.week && data.week.deload
@@ -105,8 +107,10 @@ function renderPlan(data) {
 
 function renderJournal(data) {
   if (!data.plan || !data.plan.days.length) return '';
+  const nextIndex = (data.next_day === undefined || data.next_day === null) ? 0 : data.next_day;
   const options = data.plan.days.map((day, i) =>
-    '<option value="' + i + '">День ' + (i + 1) + ' · ' + esc(day.title) + '</option>').join('');
+    '<option value="' + i + '"' + (i === nextIndex ? ' selected' : '') + '>День ' + (i + 1)
+    + ' · ' + esc(day.title) + '</option>').join('');
   const hasWeights = data.plan.days.some(day => day.slots.some(s => s.weight));
   const weightsHint = hasWeights
     ? ' Вписывать упражнения нужно только когда что-то не получилось.'
