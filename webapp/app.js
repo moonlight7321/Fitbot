@@ -485,6 +485,7 @@ function renderDiary(data) {
     + (list ? '<ul class="list" style="margin-top:10px">' + list + '</ul>' : '<p class="muted">Пока пусто.</p>')
     + '<button class="ghost" id="clear-diary" style="margin-top:10px">Очистить день</button>'
     + '<div class="muted" style="margin-top:14px">Все продукты — нажмите, чтобы подставить название:</div>'
+    + '<input id="food-filter" class="select" placeholder="Поиск продукта">'
     + '<div class="chips food-list" id="food-list">'
     + (data.foods || []).map(name =>
         '<button class="ghost food-item" data-food="' + esc(name) + '">' + esc(name) + '</button>').join('')
@@ -552,12 +553,16 @@ function renderProgressTab(data) {
             .map(w => esc(w.group) + ' (' + w.count + ')').join(', ') + '</div>' : '')
     + '</div>'
     + '<div class="card"><h2>Графики тренировок</h2>'
-    + (series.length ? series.map(sparkline).join('') : '<p class="muted">Пока нет данных: запишите тренировку с весами.</p>')
+    + (series.filter(item => (item.points || []).length >= 2).map(sparkline).join('')
+        || '<p class="muted">График появится после двух тренировок с записанными весами: '
+          + 'запишите подходы и вес в редакторе тренировки.</p>')
     + '</div>'
     + '<div class="card"><h2>Питание по дням</h2>'
     + (nutrition.length >= 2
         ? sparkline({ name: 'Калории, ккал', points: nutrition })
-        : '<p class="muted">Нужно хотя бы два дня с записями в дневнике.</p>')
+          + (data.calories ? '<div class="muted">Норма: ' + data.calories.target + ' ккал</div>' : '')
+        : '<p class="muted">График появится после двух дней с записями в дневнике. '
+          + 'Сейчас записей: ' + nutrition.length + '.</p>')
     + '</div>'
     + '<div class="card"><h2>История недель</h2>'
     + (weeks || '<p class="muted">Пока пусто.</p>') + '</div>'
@@ -603,6 +608,15 @@ function render() {
   else view.innerHTML = renderCalories(data);
 
   if (state.tab === "diary" && data.access && data.diary) {
+    const foodFilter = document.getElementById("food-filter");
+    if (foodFilter) foodFilter.oninput = () => {
+      const query = foodFilter.value.trim().toLowerCase().replace(/ё/g, "е");
+      document.querySelectorAll("[data-food]").forEach(btn => {
+        const name = (btn.dataset.food || "").toLowerCase().replace(/ё/g, "е");
+        btn.style.display = !query || name.indexOf(query) >= 0 ? "" : "none";
+      });
+    };
+
     document.querySelectorAll("[data-food]").forEach(btn => {
       btn.onclick = () => {
         const input = document.getElementById("meal");
