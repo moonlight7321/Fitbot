@@ -484,7 +484,11 @@ function renderDiary(data) {
     + '<button class="primary" id="add-meal">Добавить</button></div>'
     + (list ? '<ul class="list" style="margin-top:10px">' + list + '</ul>' : '<p class="muted">Пока пусто.</p>')
     + '<button class="ghost" id="clear-diary" style="margin-top:10px">Очистить день</button>'
-    + '</div>';
+    + '<div class="muted" style="margin-top:14px">Все продукты — нажмите, чтобы подставить название:</div>'
+    + '<div class="chips food-list" id="food-list">'
+    + (data.foods || []).map(name =>
+        '<button class="ghost food-item" data-food="' + esc(name) + '">' + esc(name) + '</button>').join('')
+    + '</div></div>';
 }
 
 function renderCalories(data) {
@@ -599,6 +603,17 @@ function render() {
   else view.innerHTML = renderCalories(data);
 
   if (state.tab === "diary" && data.access && data.diary) {
+    document.querySelectorAll("[data-food]").forEach(btn => {
+      btn.onclick = () => {
+        const input = document.getElementById("meal");
+        if (!input) return;
+        const name = btn.dataset.food;
+        const current = input.value.trim();
+        input.value = current ? current + ", " + name + " " : name + " ";
+        input.focus();
+      };
+    });
+
     document.getElementById("add-meal").onclick = async () => {
       const input = document.getElementById("meal");
       const text = input.value.trim();

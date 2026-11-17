@@ -195,6 +195,7 @@ async def api_overview(request: web.Request) -> web.Response:
         "calories": None,
         "diary": {"totals": diary.totals(rows), "items": rows[-20:]} if access else None,
         "diary_history": diary_history,
+        "foods": sorted(food.name for food in diary.FOODS),
         "progress": None,
         "profile_raw": None,
         "options": {
