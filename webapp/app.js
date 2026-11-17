@@ -201,7 +201,7 @@ function renderEditor(data) {
     + '<select class="select ed-num" data-ed-reps="' + i + '">'
     + [6, 8, 10, 12, 15, 20].map(n => '<option value="' + n + '"' + (n === item.reps ? ' selected' : '') + '>' + n + ' раз</option>').join('')
     + '</select>'
-    + '<input class="select ed-num ed-weight" type="number" min="0" max="500" step="0.5" data-ed-weight="' + i + '" value="' + item.weight + '" title="вес, кг">'
+    + '<input class="select ed-num ed-weight" type="number" min="0" max="300" step="0.5" data-ed-weight="' + i + '" value="' + item.weight + '" title="вес, кг">'
     + '</div>').join('');
 
   return ''

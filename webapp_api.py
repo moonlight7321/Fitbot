@@ -369,6 +369,18 @@ async def api_alternatives(request: web.Request) -> web.Response:
     return web.json_response({"items": items})
 
 
+def _weight_cap(exercise) -> float:
+    """Реалистичный предел для снаряда: штанга 300, гантель 60, тренажёр 200."""
+    equipment = (exercise.equipment or "").lower()
+    if "гантел" in equipment:
+        return 60.0
+    if "тренажёр" in equipment or "тренажер" in equipment or "блок" in equipment:
+        return 200.0
+    if "штанг" in equipment:
+        return 300.0
+    return 60.0
+
+
 async def api_workout_custom(request: web.Request) -> web.Response:
     user_id = _user_id(request)
     assert user_id is not None
@@ -394,7 +406,8 @@ async def api_workout_custom(request: web.Request) -> web.Response:
     records = []
     for item in items:
         slug = str(item.get("slug", ""))
-        if exercises.by_slug(slug) is None:
+        exercise = exercises.by_slug(slug)
+        if exercise is None:
             continue
         original = str(item.get("original", "")).strip()
         if original and original != slug:
@@ -402,9 +415,17 @@ async def api_workout_custom(request: web.Request) -> web.Response:
         try:
             sets = max(1, min(10, int(item.get("sets", 3))))
             reps = max(1, min(50, int(item.get("reps", 10))))
-            weight = max(0.0, min(500.0, float(item.get("weight", 0))))
+            weight = max(0.0, float(item.get("weight", 0)))
         except (TypeError, ValueError):
             continue
+
+        cap = _weight_cap(exercise)
+        if weight > cap:
+            return web.json_response(
+                {"error": "too heavy",
+                 "message": f"{exercise.name_ru}: максимум {cap:g} кг"},
+                status=400,
+            )
         for _ in range(sets):
             records.append(progress.SetRecord(slug, weight, reps))
 
