@@ -194,6 +194,27 @@ async def clear(user_id: int, day: Optional[str] = None) -> int:
     return await asyncio.to_thread(_clear_sync, user_id, day or today())
 
 
+def _history_sync(user_id: int, days: int) -> List[Dict]:
+    conn = _open()
+    try:
+        rows = conn.execute(
+            """SELECT day, ROUND(SUM(kcal), 1) AS kcal,
+                      ROUND(SUM(protein), 1) AS protein,
+                      ROUND(SUM(fat), 1) AS fat,
+                      ROUND(SUM(carbs), 1) AS carbs
+               FROM meals WHERE user_id = ?
+               GROUP BY day ORDER BY day DESC LIMIT ?""",
+            (user_id, days),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+    finally:
+        conn.close()
+
+
+async def history(user_id: int, days: int = 14) -> List[Dict]:
+    return await asyncio.to_thread(_history_sync, user_id, days)
+
+
 def totals(rows: List[Dict]) -> Dict[str, float]:
     return {
         "kcal": round(sum(r["kcal"] for r in rows), 1),

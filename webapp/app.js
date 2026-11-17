@@ -370,6 +370,63 @@ function renderCalories(data) {
     + '</div>';
 }
 
+function renderProgressTab(data) {
+  if (!data.access) return paywallCard("Прогресс");
+  const series = (data.progress && data.progress.series) || [];
+  const nutrition = (data.diary_history || []).map(row => ({ date: row.day, weight: row.kcal }));
+  const history = data.history || { weeks: [], experience: 0, total: 0, streak: 0 };
+  const details = data.details || [];
+  const reminders = data.reminders || { days: [], time: "" };
+  const statusNames = { done: "✅", partial: "🟡", skip: "😕", empty: "—" };
+
+  const weeks = (history.weeks || []).map(item =>
+    '<div class="muted">Неделя ' + item.week + ': ✅ ' + item.done
+    + (item.partial ? ' · 🟡 ' + item.partial : '')
+    + (item.skipped ? ' · 😕 ' + item.skipped : '')
+    + (item.deload ? ' · разгрузка' : '') + '</div>').join('');
+
+  const days = details.map(item =>
+    '<div class="muted">' + esc(item.date.slice(8, 10) + '.' + item.date.slice(5, 7))
+    + ' · День ' + (item.day_index + 1) + ' · ' + (statusNames[item.status] || '—')
+    + Object.keys(item.reasons || {}).slice(0, 1).map(group =>
+        ' · ' + esc(group) + ': ' + Object.keys(item.reasons[group]).length + ' прич.')
+      .join('') + '</div>').join('');
+
+  const dayButtons = [1, 2, 3, 4, 5, 6, 7].map(d =>
+    '<button class="tab' + (reminders.days.indexOf(d) >= 0 ? ' active' : '') + '" data-rem-day="'
+    + d + '">' + ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][d - 1] + '</button>').join('');
+
+  return ''
+    + '<div class="card"><h2>Прогресс</h2>'
+    + '<div class="muted">Тренировок: ' + (data.progress ? data.progress.count : 0)
+    + ' · стаж ' + history.experience + ' нед.'
+    + (history.streak ? ' · серия ' + history.streak + ' нед.' : '') + '</div>'
+    + (data.progress && data.progress.weak_groups && data.progress.weak_groups.length
+        ? '<div class="muted">Отстают: ' + data.progress.weak_groups
+            .map(w => esc(w.group) + ' (' + w.count + ')').join(', ') + '</div>' : '')
+    + '</div>'
+    + '<div class="card"><h2>Графики тренировок</h2>'
+    + (series.length ? series.map(sparkline).join('') : '<p class="muted">Пока нет данных: запишите тренировку с весами.</p>')
+    + '</div>'
+    + '<div class="card"><h2>Питание по дням</h2>'
+    + (nutrition.length >= 2
+        ? sparkline({ name: 'Калории, ккал', points: nutrition })
+        : '<p class="muted">Нужно хотя бы два дня с записями в дневнике.</p>')
+    + '</div>'
+    + '<div class="card"><h2>История недель</h2>'
+    + (weeks || '<p class="muted">Пока пусто.</p>') + '</div>'
+    + '<div class="card"><h2>Детали по дням</h2>'
+    + (days || '<p class="muted">Пока пусто.</p>') + '</div>'
+    + '<div class="card"><h2>Напоминания</h2>'
+    + '<div class="muted">Дни:</div><div class="input-row" style="flex-wrap:wrap">' + dayButtons + '</div>'
+    + '<label class="field">Время<select id="rem-time" class="select">'
+    + ["07:00", "09:00", "12:00", "18:00", "19:00", "21:00"].map(t =>
+        '<option value="' + t + '"' + (t === reminders.time ? ' selected' : '') + '>' + t + '</option>').join('')
+    + '</select></label>'
+    + '<button class="primary" id="rem-save" style="margin-top:8px">Сохранить напоминания</button>'
+    + '</div>';
+}
+
 function render() {
   const data = state.overview;
   const view = document.getElementById("view");
@@ -379,6 +436,7 @@ function render() {
   if (state.tab === "plan") view.innerHTML = renderPlan(data);
   else if (state.tab === "exercises") view.innerHTML = renderExercises();
   else if (state.tab === "diary") view.innerHTML = renderDiary(data);
+  else if (state.tab === "progress") view.innerHTML = renderProgressTab(data);
   else view.innerHTML = renderCalories(data);
 
   if (state.tab === "diary" && data.access && data.diary) {
@@ -553,6 +611,32 @@ function render() {
     };
     const skipButton = document.getElementById("wk-skip");
     if (skipButton) skipButton.onclick = () => mark("skip");
+  }
+
+  if (state.tab === "progress" && data.access) {
+    const selected = new Set((data.reminders && data.reminders.days) || []);
+    document.querySelectorAll("[data-rem-day]").forEach(btn => {
+      btn.onclick = () => {
+        const day = Number(btn.dataset.remDay);
+        if (selected.has(day)) selected.delete(day);
+        else selected.add(day);
+        btn.classList.toggle("active");
+      };
+    });
+    const saveRem = document.getElementById("rem-save");
+    if (saveRem) saveRem.onclick = async () => {
+      try {
+        await api("/api/reminders", {
+          method: "POST",
+          body: JSON.stringify({
+            days: Array.from(selected),
+            time: document.getElementById("rem-time").value,
+          }),
+        });
+        toast("Напоминания сохранены");
+        await loadOverview();
+      } catch (e) { toast("Не удалось сохранить"); }
+    };
   }
 
   if (state.tab === "exercises") {

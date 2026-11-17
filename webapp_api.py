@@ -159,6 +159,7 @@ async def api_overview(request: web.Request) -> web.Response:
     status = await subs.get_status(user_id)
     access = status.active
     rows = await diary.items(user_id) if access else []
+    diary_history = await diary.history(user_id, 14) if access else []
 
     payload = {
         "access": access,
@@ -172,6 +173,7 @@ async def api_overview(request: web.Request) -> web.Response:
         "plan": None,
         "calories": None,
         "diary": {"totals": diary.totals(rows), "items": rows[-20:]} if access else None,
+        "diary_history": diary_history,
         "progress": None,
         "profile_raw": None,
         "options": {
@@ -194,6 +196,7 @@ async def api_overview(request: web.Request) -> web.Response:
             "sex": profile.sex, "age": profile.age,
             "limitations": sorted(profile.limits),
         }
+        payload["reminders"] = {"days": profile.weekdays, "time": profile.workout_time}
         payload["profile"] = {
             "height": profile.height,
             "weight": profile.weight,
@@ -282,6 +285,9 @@ async def api_overview(request: web.Request) -> web.Response:
                 ],
             }
             payload["progress"] = await _progress_payload(user_id)
+            history = await progress.history_weeks(user_id, 8)
+            payload["history"] = history
+            payload["details"] = await progress.day_details(user_id, 12)
         if profile.has_body_data and profile.activity:
             result = calories.compute(profile)
             payload["calories"] = {
@@ -295,6 +301,35 @@ async def api_overview(request: web.Request) -> web.Response:
             }
 
     return web.json_response(payload)
+
+
+async def api_reminders(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+
+    data = await request.json()
+    raw_days = data.get("days") or []
+    if not isinstance(raw_days, list):
+        return web.json_response({"error": "bad days"}, status=400)
+    days = sorted({int(d) for d in raw_days if str(d).isdigit() and 1 <= int(d) <= 7})
+    time_value = str(data.get("time", "")).strip()
+    allowed = {"07:00", "09:00", "12:00", "18:00", "19:00", "21:00"}
+    if time_value and time_value not in allowed:
+        return web.json_response({"error": "bad time"}, status=400)
+
+    profile = await profiles.get(user_id)
+    if profile is None:
+        return web.json_response({"error": "no profile"}, status=400)
+
+    profile = dataclasses.replace(
+        profile,
+        workout_days=",".join(str(d) for d in days),
+        workout_time=time_value,
+    )
+    await profiles.save(profile)
+    return web.json_response({"ok": True})
 
 
 async def api_profile_save(request: web.Request) -> web.Response:
@@ -729,6 +764,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_post("/api/feel", api_feel)
     app.router.add_post("/api/skip", api_skip)
     app.router.add_post("/api/profile", api_profile_save)
+    app.router.add_post("/api/reminders", api_reminders)
     app.router.add_post("/api/checks", api_check)
     app.router.add_get("/api/exercise/{slug}", api_exercise)
     app.router.add_post("/api/diary/add", api_diary_add)
