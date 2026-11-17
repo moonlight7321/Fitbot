@@ -207,6 +207,10 @@ async def api_overview(request: web.Request) -> web.Response:
                         continue
                     sets = await progress.last_sets(user_id, slug)
                     if not sets:
+                        start = planner.start_weight(profile.weight, slot.exercise)
+                        if start > 0:
+                            label = "≈ " + planner.format_weight(start, slot.exercise.equipment)
+                            weights[slug] = {"label": label, "reps": None}
                         continue
                     allow_group = allow and not breakdown.get(slot.exercise.group, {}).get("pain")
                     top = progress._top_reps(profile.goal)

@@ -174,14 +174,37 @@ def build(profile: "prof.Profile") -> Plan:
         note += f" Упражнения с нагрузкой на проблемную зону исключены."
 
     note += (
-        " После первой тренировки впишите, с какими весами работали — "
-        "без этих цифр бот не сможет подсказывать прогрессию."
+        " Веса со знаком «≈» — стартовый ориентир. Если окажется тяжело или, "
+        "наоборот, легко — поменяйте вес на следующей тренировке: бот запомнит "
+        "и будет считать прогрессию от него."
     )
     if profile.goal == "mass":
         note += " Вес подбирайте так, чтобы последние 2 повтора давались тяжело, но без потери техники."
     elif profile.goal == "relief":
         note += " Отдых короче, но техника важнее темпа."
     return Plan(days=days, note=note)
+
+
+def start_weight(body_weight: float, exercise) -> float:
+    """Ориентир стартового веса: процент от массы тела по снаряду и группе."""
+    equipment = (exercise.equipment or "").lower()
+    group = exercise.group
+
+    if "свой вес" in equipment or body_weight <= 0:
+        return 0.0
+
+    if "гантел" in equipment:
+        pct = 0.10 if group == "Ноги" else 0.07
+        step = 1.0
+    elif "штанг" in equipment:
+        pct = 0.20 if group == "Ноги" else 0.12
+        step = 2.5
+    else:
+        pct = 0.20
+        step = 2.5
+
+    raw = body_weight * pct
+    return max(step, round(raw / step) * step)
 
 
 def format_weight(weight: float, equipment: str) -> str:

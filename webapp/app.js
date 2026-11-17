@@ -84,6 +84,20 @@ function renderPlan(data) {
     + '<div class="muted">' + p.days + ' тренировки в неделю по ' + p.minutes + ' минут</div>'
     + '<div class="muted">Ограничения: ' + esc(p.limitations) + '</div>'
     + '<div class="days" style="margin-top:10px">' + days + '</div></div>'
+    + '<div class="card"><button class="ghost" id="weight-guide-btn">❓ Как подобрать вес</button>'
+    + '<div id="weight-guide" class="hidden">'
+    + '<p class="muted">Штанга — около 20 % веса тела, гантели — около 10 % на руку '
+    + '(в записи указывайте вес одной гантели), тренажёры — самый лёгкий вес, '
+    + 'где чувствуется сопротивление.</p>'
+    + '<p class="muted">Для вашего веса ' + (data.profile ? data.profile.weight : '—')
+    + ' кг это примерно ' + (data.profile ? Math.round(data.profile.weight * 0.2) : '—')
+    + ' кг на штанге и ' + (data.profile ? Math.round(data.profile.weight * 0.1) : '—')
+    + ' кг на руку.</p>'
+    + '<p class="muted">Последние 2 повторения должны даваться тяжело, но без потери техники. '
+    + 'Если тяжело или легко — поменяйте вес на следующей тренировке, бот запомнит и будет '
+    + 'считать прогрессию от него.</p>'
+    + '<p class="muted">Это ориентир, а не назначение.</p>'
+    + '</div></div>'
     + renderJournal(data)
     + renderProgress(data)
     + '<div class="card"><p class="muted">' + esc(data.plan.note) + '</p></div>';
@@ -310,6 +324,14 @@ function render() {
     document.getElementById("clear-diary").onclick = async () => {
       try { await api("/api/diary/clear", { method: "POST", body: "{}" }); await loadOverview(); }
       catch (e) { toast("Ошибка очистки"); }
+    };
+  }
+
+  if (state.tab === "plan") {
+    const guideBtn = document.getElementById("weight-guide-btn");
+    if (guideBtn) guideBtn.onclick = () => {
+      const box = document.getElementById("weight-guide");
+      if (box) box.classList.toggle("hidden");
     };
   }
 
