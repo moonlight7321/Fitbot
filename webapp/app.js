@@ -68,17 +68,20 @@ function numberOptions(list, current) {
     + value + '</option>').join('');
 }
 
-function profileFormCard(data) {
+function profileFormCard(data, opts) {
+  const options = opts || {};
   const raw = data.profile_raw || {};
   const opt = data.options || {};
-  const hidden = data.profile_raw ? ' hidden' : '';
+  const hidden = (data.profile_raw && !options.forceOpen) ? ' hidden' : '';
+  const toggle = options.hideToggle ? '' : '<button class="ghost" id="profile-toggle">⚙️ Анкета и расчёт</button>';
+  const saveLabel = options.hideToggle ? 'Сохранить анкету' : 'Сохранить и рассчитать';
   const limits = (raw.limitations || []);
   const limitBoxes = Object.keys(opt.limitations || {}).map(key =>
     '<label class="chk"><input type="checkbox" value="' + esc(key) + '"'
     + (limits.indexOf(key) >= 0 ? ' checked' : '') + '> ' + esc(opt.limitations[key]) + '</label>').join('');
 
   return ''
-    + '<div class="card"><button class="ghost" id="profile-toggle">⚙️ Анкета и расчёт</button>'
+    + '<div class="card">' + toggle
     + '<div id="profile-form"' + hidden + '>'
     + '<div class="muted" style="margin-top:8px">Заполните один раз — план и калории посчитаются сразу.</div>'
     + '<label class="field">Цель<select id="pf-goal" class="select">' + optionsHtml(opt.goals, raw.goal || 'tone') + '</select></label>'
@@ -98,7 +101,7 @@ function profileFormCard(data) {
     + '<label class="field" style="flex:1">Вес, кг<input id="pf-weight" class="select" type="number" min="30" max="250" value="' + (raw.weight || 70) + '"></label>'
     + '</div>'
     + '<div class="muted" style="margin-top:8px">Ограничения:</div><div class="chips">' + limitBoxes + '</div>'
-    + '<button class="primary" id="profile-save" style="margin-top:10px">Сохранить и рассчитать</button>'
+    + '<button class="primary" id="profile-save" style="margin-top:10px">' + saveLabel + '</button>'
     + '</div></div>';
 }
 
@@ -116,6 +119,27 @@ function paywallCard(title, data) {
     + 'дальше 349 ₽ за 30 дней.</p>'
     + '<p class="muted">Без подписки остаются калькулятор калорий и 17 базовых упражнений.</p>'
     + trial + paid + '</div>';
+}
+
+async function saveProfile() {
+  const value = id => document.getElementById(id).value;
+  const limits = Array.from(
+    document.querySelectorAll("#profile-form input[type=checkbox]:checked")
+  ).map(input => input.value);
+  try {
+    await api("/api/profile", {
+      method: "POST",
+      body: JSON.stringify({
+        goal: value("pf-goal"), experience: value("pf-exp"), equipment: value("pf-eq"),
+        days: Number(value("pf-days")), minutes: Number(value("pf-min")),
+        activity: value("pf-act"), sex: value("pf-sex"), age: Number(value("pf-age")),
+        height: Number(value("pf-height")), weight: Number(value("pf-weight")),
+        limitations: limits,
+      }),
+    });
+    toast("Анкета сохранена");
+    await loadOverview();
+  } catch (e) { toast(e.message || "Проверьте цифры: рост 100–250, вес 30–250"); }
 }
 
 function renderPlan(data) {
@@ -493,8 +517,24 @@ function renderProgressTab(data) {
 function render() {
   const data = state.overview;
   const view = document.getElementById("view");
+  const tabs = document.querySelector(".tabs");
 
   if (!data) { view.innerHTML = '<div class="card"><p class="muted">Загрузка…</p></div>'; return; }
+
+  // Пока анкеты нет — показываем только её, без остальных вкладок
+  if (!data.profile_raw) {
+    if (tabs) tabs.classList.add("hidden");
+    view.innerHTML = ''
+      + '<div class="card"><h2>Добро пожаловать</h2>'
+      + '<p class="muted">Заполните анкету — сразу посчитаем план тренировок и калории. '
+      + 'Это займёт минуту и делается один раз.</p></div>'
+      + profileFormCard(data, { forceOpen: true, hideToggle: true });
+    const saveBtn = document.getElementById("profile-save");
+    if (saveBtn) saveBtn.onclick = saveProfile;
+    return;
+  }
+
+  if (tabs) tabs.classList.remove("hidden");
 
   if (state.tab === "plan") view.innerHTML = renderPlan(data);
   else if (state.tab === "exercises") view.innerHTML = renderExercises();
@@ -536,26 +576,7 @@ function render() {
       if (form) form.classList.toggle("hidden");
     };
     const save = document.getElementById("profile-save");
-    if (save) save.onclick = async () => {
-      const value = id => document.getElementById(id).value;
-      const limits = Array.from(
-        document.querySelectorAll("#profile-form input[type=checkbox]:checked")
-      ).map(input => input.value);
-      try {
-        await api("/api/profile", {
-          method: "POST",
-          body: JSON.stringify({
-            goal: value("pf-goal"), experience: value("pf-exp"), equipment: value("pf-eq"),
-            days: Number(value("pf-days")), minutes: Number(value("pf-min")),
-            activity: value("pf-act"), sex: value("pf-sex"), age: Number(value("pf-age")),
-            height: Number(value("pf-height")), weight: Number(value("pf-weight")),
-            limitations: limits,
-          }),
-        });
-        toast("Анкета сохранена");
-        await loadOverview();
-      } catch (e) { toast("Проверьте цифры: рост 100–250, вес 30–250"); }
-    };
+    if (save) save.onclick = saveProfile;
   }
 
   if (state.tab === "plan" && state.editor) {
