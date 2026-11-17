@@ -237,7 +237,6 @@ function renderPlan(data) {
     + 'считать прогрессию от него.</p>'
     + '<p class="muted">Это ориентир, а не назначение.</p>'
     + '</div></div>'
-    + renderJournal(data)
     + renderEditor(data)
     + renderProgress(data)
     + '<div class="card"><p class="muted">' + esc(data.plan.note) + '</p></div>';
@@ -273,6 +272,7 @@ function renderEditor(data) {
     + [6, 8, 10, 12, 15, 20].map(n => '<option value="' + n + '"' + (n === item.reps ? ' selected' : '') + '>' + n + ' раз</option>').join('')
     + '</select>'
     + '<input class="select ed-num ed-weight" type="number" min="0" max="300" step="0.5" data-ed-weight="' + i + '" value="' + item.weight + '" title="вес, кг">'
+    + '<span class="muted">кг</span>'
     + '</div>').join('');
 
   return ''
@@ -280,7 +280,13 @@ function renderEditor(data) {
     + '<p class="muted">Нажмите на название, чтобы заменить упражнение. Подходы и повторения — в списках.</p>'
     + '<div id="ed-rows">' + rows + '</div>'
     + '<div id="ed-alt" class="hidden"></div>'
-    + '<button class="primary" id="ed-save" style="margin-top:8px">Записать тренировку</button></div>';
+    + '<div class="input-row" style="margin-top:8px">'
+    + '<button class="primary" id="ed-save">Записать тренировку</button>'
+    + '</div>'
+    + '<div class="input-row" style="margin-top:6px">'
+    + '<button class="ghost" id="ed-partial">🟡 Частично</button>'
+    + '<button class="ghost" id="ed-skip">😕 Не смог</button>'
+    + '</div></div>';
 }
 
 function renderJournal(data) {
@@ -663,8 +669,23 @@ function render() {
         });
         toast("Тренировка записана");
         await loadOverview();
-      } catch (e) { toast("Не удалось записать"); }
+      } catch (e) { toast(e.message || "Не удалось записать"); }
     };
+
+    const markEd = async (status) => {
+      try {
+        await api("/api/checks", {
+          method: "POST",
+          body: JSON.stringify({ day_index: ed.dayIndex, status }),
+        });
+        toast(status === "partial" ? "Отмечено как частичное" : "День пропущен");
+        await loadOverview();
+      } catch (e) { toast(e.message || "Не удалось отметить"); }
+    };
+    const skipEd = document.getElementById("ed-skip");
+    if (skipEd) skipEd.onclick = () => markEd("skip");
+    const partialEd = document.getElementById("ed-partial");
+    if (partialEd) partialEd.onclick = () => markEd("partial");
   }
 
   if (state.tab === "plan" && data.plan && data.plan.days.length) {
@@ -690,108 +711,6 @@ function render() {
       const box = document.getElementById("weight-guide");
       if (box) box.classList.toggle("hidden");
     };
-  }
-
-  if (state.tab === "plan" && data.plan && data.plan.days.length) {
-    const complete = document.getElementById("wk-complete");
-    if (complete) complete.onclick = async () => {
-      const day = document.getElementById("wk-day").value;
-      try {
-        await api("/api/workouts/complete", {
-          method: "POST",
-          body: JSON.stringify({ day_index: Number(day) }),
-        });
-        const feelBox = document.getElementById("feel-box");
-        if (feelBox) {
-          feelBox.classList.remove("hidden");
-          feelBox.querySelectorAll("[data-feel]").forEach(btn => {
-            btn.onclick = async () => {
-              try {
-                await api("/api/feel", {
-                  method: "POST",
-                  body: JSON.stringify({ day_index: Number(day), feel: btn.dataset.feel }),
-                });
-                toast("Отмечено. Вес учту на следующей тренировке");
-                await loadOverview();
-              } catch (e) { toast("Не удалось сохранить оценку"); }
-            };
-          });
-        }
-        await loadOverview();
-      } catch (e) { toast("Не получилось записать"); }
-    };
-
-    const save = document.getElementById("wk-save");
-    if (save) save.onclick = async () => {
-      const day = document.getElementById("wk-day").value;
-      const text = document.getElementById("wk-text").value.trim();
-      if (!text) return;
-      try {
-        const result = await api("/api/workouts", {
-          method: "POST",
-          body: JSON.stringify({ day_index: Number(day), text }),
-        });
-        const out = document.getElementById("wk-result");
-        if (result.advice && result.advice.length) {
-          out.innerHTML = '<b>Следующая тренировка:</b><br>'
-            + result.advice.map(a => esc(a.name) + ' → ' + esc(a.text)).join('<br>');
-        } else if (result.errors && result.errors.length) {
-          out.textContent = result.errors.join("; ");
-        } else {
-          out.textContent = "Не удалось разобрать записи";
-        }
-        if (result.added) await loadOverview();
-      } catch (e) { toast("Не получилось записать"); }
-    };
-
-    const mark = async (status) => {
-      const day = document.getElementById("wk-day").value;
-      try {
-        await api("/api/checks", {
-          method: "POST",
-          body: JSON.stringify({ day_index: Number(day), status }),
-        });
-        toast(status === "partial" ? "Отмечено как частичное" : "День пропущен");
-        await loadOverview();
-      } catch (e) { toast("Не удалось отметить"); }
-    };
-    const partialButton = document.getElementById("wk-partial");
-    if (partialButton) partialButton.onclick = () => {
-      const box = document.getElementById("part-box");
-      const dayIndex = Number(document.getElementById("wk-day").value);
-      const day = data.plan.days[dayIndex];
-      const list = document.getElementById("part-list");
-      const selected = new Set();
-      list.innerHTML = day.slots.map(s =>
-        '<button class="ex" data-slug="' + esc(s.slug) + '">' + esc(s.name) + '</button>').join('');
-      list.querySelectorAll(".ex").forEach(btn => {
-        btn.onclick = () => {
-          const slug = btn.dataset.slug;
-          if (selected.has(slug)) { selected.delete(slug); btn.classList.remove("selected"); }
-          else { selected.add(slug); btn.classList.add("selected"); }
-        };
-      });
-      box.classList.remove("hidden");
-      const send = document.getElementById("part-send");
-      send.onclick = async () => {
-        if (!selected.size) { toast("Отметьте хотя бы одно упражнение"); return; }
-        try {
-          await api("/api/checks", {
-            method: "POST",
-            body: JSON.stringify({
-              day_index: dayIndex,
-              status: "partial",
-              slugs: Array.from(selected),
-              reason: document.getElementById("part-reason").value,
-            }),
-          });
-          toast("Отмечено как частичное");
-          await loadOverview();
-        } catch (e) { toast("Не удалось отметить"); }
-      };
-    };
-    const skipButton = document.getElementById("wk-skip");
-    if (skipButton) skipButton.onclick = () => mark("skip");
   }
 
   if (state.tab === "progress") {
