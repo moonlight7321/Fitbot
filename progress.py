@@ -183,6 +183,23 @@ def _step_for(equipment: str) -> float:
     return 2.5
 
 
+def next_plan(goal: str, equipment: str, sets: Sequence[sqlite3.Row]) -> dict:
+    """Вес и повторения на следующую тренировку (для подстановки в план)."""
+    if not sets:
+        return {"weight": 0.0, "reps": None, "bodyweight": False}
+
+    top = _top_reps(goal)
+    weight = float(sets[-1]["weight"])
+    best = max(int(s["reps"]) for s in sets)
+    bodyweight = weight <= 0 or "свой вес" in (equipment or "").lower()
+
+    if bodyweight:
+        return {"weight": 0.0, "reps": best + 1, "bodyweight": True}
+    if best >= top:
+        return {"weight": weight + _step_for(equipment), "reps": top, "bodyweight": False}
+    return {"weight": weight, "reps": best + 1, "bodyweight": False}
+
+
 def next_advice(goal: str, equipment: str, sets: Sequence[sqlite3.Row]) -> str:
     """Что делать на следующей тренировке с этим упражнением."""
     if not sets:

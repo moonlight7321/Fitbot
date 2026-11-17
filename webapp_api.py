@@ -21,6 +21,7 @@ import diary
 import exercises
 import planner
 import profiles
+import progress
 import subscriptions as subs
 from config import Settings
 
@@ -110,6 +111,7 @@ async def api_overview(request: web.Request) -> web.Response:
         "plan": None,
         "calories": None,
         "diary": {"totals": diary.totals(rows), "items": rows[-20:]} if access else None,
+        "progress": None,
     }
 
     if profile is not None:
@@ -127,6 +129,18 @@ async def api_overview(request: web.Request) -> web.Response:
         # План — платная функция
         if access:
             plan = planner.build(profile)
+            weights = {}
+            for day in plan.days:
+                for slot in day.slots:
+                    slug = slot.exercise.slug
+                    if slug in weights:
+                        continue
+                    sets = await progress.last_sets(user_id, slug)
+                    if not sets:
+                        continue
+                    step = progress.next_plan(profile.goal, slot.exercise.equipment, sets)
+                    weights[slug] = "вес тела" if step["bodyweight"] else f"{step['weight']:g} кг"
+
             payload["plan"] = {
                 "note": plan.note,
                 "days": [
@@ -134,13 +148,14 @@ async def api_overview(request: web.Request) -> web.Response:
                         "title": day.title,
                         "slots": [
                             {"slug": s.exercise.slug, "name": s.exercise.name_ru,
-                             "sets": s.sets, "reps": s.reps}
+                             "sets": s.sets, "reps": s.reps, "weight": weights.get(s.exercise.slug)}
                             for s in day.slots
                         ],
                     }
                     for day in plan.days
                 ],
             }
+            payload["progress"] = await _progress_payload(user_id)
         if profile.has_body_data and profile.activity:
             result = calories.compute(profile)
             payload["calories"] = {
@@ -154,6 +169,96 @@ async def api_overview(request: web.Request) -> web.Response:
             }
 
     return web.json_response(payload)
+
+
+async def _progress_payload(user_id: int) -> dict:
+    rows = await progress.history(user_id, 28)
+    grouped: dict = {}
+    for row in rows:
+        grouped.setdefault(row["slug"], []).append(row)
+
+    items = []
+    for slug, history in grouped.items():
+        ex = exercises.by_slug(slug)
+        if ex is None:
+            continue
+        first = float(history[0]["weight"])
+        last = float(history[-1]["weight"])
+        items.append({
+            "slug": slug, "name": ex.name_ru,
+            "first": first, "last": last, "delta": round(last - first, 1),
+            "last_date": history[-1]["done_on"],
+        })
+    items.sort(key=lambda x: x["delta"], reverse=True)
+    return {"count": await progress.count(user_id), "items": items[:12]}
+
+
+async def api_progress(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+    return web.json_response(await _progress_payload(user_id))
+
+
+async def api_workout_add(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+
+    data = await request.json()
+    try:
+        day_index = int(data.get("day_index", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad day"}, status=400)
+    text = str(data.get("text", ""))
+
+    profile = await profiles.get(user_id)
+    if profile is None:
+        return web.json_response({"error": "no profile"}, status=400)
+
+    plan = planner.build(profile)
+    if day_index < 0 or day_index >= len(plan.days):
+        return web.json_response({"error": "bad day"}, status=400)
+    day = plan.days[day_index]
+    allowed = {slot.exercise.slug: slot.exercise for slot in day.slots}
+
+    records, errors, touched = [], [], []
+    for line in text.splitlines():
+        parsed = progress.parse_line(line)
+        if parsed is None:
+            if line.strip():
+                errors.append(f"«{line.strip()[:24]}»: формат «упражнение 60x8»")
+            continue
+        name, sets = parsed
+        ex = exercises.find_by_name_among(name, allowed)
+        if ex is None:
+            errors.append(f"«{name}» не найден")
+            continue
+        if ex.slug not in touched:
+            touched.append(ex.slug)
+        for weight, reps in sets:
+            records.append(progress.SetRecord(ex.slug, weight, reps))
+
+    if not records:
+        return web.json_response({"added": 0, "errors": errors})
+
+    await progress.add_workout(user_id, day_index, day.title, records)
+
+    advice = []
+    for slug in touched:
+        ex = exercises.by_slug(slug)
+        sets = await progress.last_sets(user_id, slug)
+        advice.append({
+            "name": ex.name_ru if ex else slug,
+            "text": progress.next_advice(profile.goal, ex.equipment if ex else "", sets),
+        })
+
+    return web.json_response({
+        "added": len(records), "errors": errors, "advice": advice,
+        "progress": await _progress_payload(user_id),
+    })
 
 
 async def api_exercises(request: web.Request) -> web.Response:
@@ -256,6 +361,8 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_static("/media/", exercises.MEDIA_DIR.parent, show_index=False)
     app.router.add_get("/api/overview", api_overview)
     app.router.add_get("/api/exercises", api_exercises)
+    app.router.add_get("/api/progress", api_progress)
+    app.router.add_post("/api/workouts", api_workout_add)
     app.router.add_get("/api/exercise/{slug}", api_exercise)
     app.router.add_post("/api/diary/add", api_diary_add)
     app.router.add_post("/api/diary/clear", api_diary_clear)

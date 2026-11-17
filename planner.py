@@ -179,7 +179,7 @@ def build(profile: "prof.Profile") -> Plan:
     return Plan(days=days, note=note)
 
 
-def render(profile: "prof.Profile", plan: Plan) -> str:
+def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None) -> str:
     lines = [
         "<b>Ваш план на неделю</b>",
         f"{profile.goal_title} · {profile.experience_title} · {profile.equipment_title}",
@@ -192,7 +192,12 @@ def render(profile: "prof.Profile", plan: Plan) -> str:
         if not day.slots:
             lines.append("— упражнений не нашлось")
         for n, slot in enumerate(day.slots, 1):
-            lines.append(f"{n}. {slot.exercise.name_ru} — {slot.sets}×{slot.reps}")
+            suffix = ""
+            if weights:
+                label = weights.get(slot.exercise.slug)
+                if label:
+                    suffix = f" · <b>{label}</b>"
+            lines.append(f"{n}. {slot.exercise.name_ru} — {slot.sets}×{slot.reps}{suffix}")
         lines.append("")
     lines.append(f"<i>{plan.note}</i>")
     return "\n".join(lines)

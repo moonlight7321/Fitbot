@@ -980,6 +980,22 @@ DAYS_OPTIONS = {2: "2 дня в неделю", 3: "3 дня в неделю", 4:
 MINUTES_OPTIONS = {20: "20 минут", 30: "30 минут", 45: "45 минут", 60: "60 минут"}
 
 
+async def _plan_weights(user_id: int, profile: "profiles.Profile", plan) -> dict:
+    """Рекомендованные веса по истории: подставляются прямо в план."""
+    weights: dict = {}
+    for day in plan.days:
+        for slot in day.slots:
+            slug = slot.exercise.slug
+            if slug in weights:
+                continue
+            sets = await progress.last_sets(user_id, slug)
+            if not sets:
+                continue
+            step = progress.next_plan(profile.goal, slot.exercise.equipment, sets)
+            weights[slug] = "вес тела" if step["bodyweight"] else f"{step['weight']:g} кг"
+    return weights
+
+
 async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
     plan = planner.build(profile)
     if not plan.days:
@@ -995,7 +1011,8 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
             [InlineKeyboardButton(text="🏋️ Упражнения", callback_data="ex:back")],
         ]
     )
-    await message.answer(planner.render(profile, plan), reply_markup=markup)
+    weights = await _plan_weights(message.chat.id, profile, plan)
+    await message.answer(planner.render(profile, plan, weights), reply_markup=markup)
 
 
 async def _start_profile(message: Message, state: FSMContext) -> None:

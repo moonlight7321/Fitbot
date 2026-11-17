@@ -59,6 +59,12 @@ body {
 .ex small { color: var(--muted); }
 .locked { opacity: .55; }
 .input-row { display: flex; gap: 8px; margin-top: 10px; }
+.select, .textarea {
+  width: 100%; background: #12161b; border: 1px solid #2c343f; color: var(--text);
+  border-radius: 10px; padding: 10px 12px; font-size: 15px; margin-top: 8px;
+  font-family: inherit;
+}
+.textarea { resize: vertical; }
 input[type=text] {
   flex: 1; background: #12161b; border: 1px solid #2c343f; color: var(--text);
   border-radius: 10px; padding: 10px 12px; font-size: 15px;
