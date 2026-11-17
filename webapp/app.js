@@ -614,11 +614,8 @@ function render() {
   };
 
   if (state.tab === "plan") {
-    const toggle = document.getElementById("profile-toggle");
-    if (toggle) toggle.onclick = () => {
-      const form = document.getElementById("profile-form");
-      if (form) form.classList.toggle("hidden");
-    };
+    // Кнопку «Анкета и расчёт» обрабатывает делегирование на документе:
+    // отдельный onclick здесь приводил к двойному переключению и она «не работала».
     const save = document.getElementById("profile-save");
     if (save) save.onclick = saveProfile;
     bindDraft();
