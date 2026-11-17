@@ -436,6 +436,10 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
         if date < since:
             continue
         value = int(row["done"])
+        if value == 1:
+            # «Выполнено» уже приходит из журнала; отдельная запись создала бы
+            # пустую строку, если тренировку записали задним числом.
+            continue
         item = bucket(date, int(row["day_index"]))
         if value == 0 and item["status"] != "done":
             item["status"] = "skip"
