@@ -1048,6 +1048,7 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
                 InlineKeyboardButton(text="📅 История", callback_data="wk:history"),
                 InlineKeyboardButton(text="📋 Детали", callback_data="wk:details"),
             ],
+            [InlineKeyboardButton(text="❓ Как подобрать вес", callback_data="guide:weight")],
             [InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit")],
             [InlineKeyboardButton(text="🏋️ Упражнения", callback_data="ex:back")],
         ]
@@ -1788,6 +1789,25 @@ async def _details_text(user_id: int, offset: int = 0):
             label += " · " + "; ".join(parts)
         lines.append(label)
     return "\n".join(lines), has_more
+
+
+WEIGHT_GUIDE = (
+    "<b>Как подобрать стартовый вес</b>\n\n"
+    "• штанга — примерно 20 % веса тела;\n"
+    "• гантели — около 10 % на руку (в записи указывайте вес одной гантели);\n"
+    "• тренажёры — самый лёгкий вес, где чувствуется сопротивление.\n\n"
+    "Ориентир: последние 2 повторения должны даваться тяжело, но без потери "
+    "техники. Если слишком легко — прибавьте 10–20 % на следующей тренировке.\n\n"
+    "<i>Это ориентир, а не назначение. При боли в суставах или сомнениях "
+    "начните с меньшего веса.</i>"
+)
+
+
+@pay_router.callback_query(F.data == "guide:weight")
+async def guide_weight(callback: CallbackQuery) -> None:
+    if callback.message:
+        await callback.message.answer(WEIGHT_GUIDE)
+    await callback.answer()
 
 
 @pay_router.callback_query(F.data == "wk:details")
