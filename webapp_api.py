@@ -71,6 +71,17 @@ def _check_rate(request: web.Request, kind: str) -> bool:
 
 
 @web.middleware
+async def no_cache(request: web.Request, handler):
+    """Статика мини-аппа не кешируется: иначе Telegram держит старый JS."""
+    response = await handler(request)
+    if request.path.startswith(("/static/", "/media/")) or request.path == "/":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
+@web.middleware
 async def rate_limit(request: web.Request, handler):
     """Простой лимит в памяти: 12 записей и 90 чтений в минуту на пользователя."""
     if request.path.startswith(("/static/", "/media/")) or request.path == "/":
@@ -890,7 +901,7 @@ async def index(request: web.Request) -> web.StreamResponse:
 
 def create_app(settings: Settings) -> web.Application:
     # telegram_auth первым: лимит считается по пользователю из подписи
-    app = web.Application(middlewares=[telegram_auth, rate_limit])
+    app = web.Application(middlewares=[telegram_auth, rate_limit, no_cache])
     app["bot_token"] = settings.telegram_token
     app.router.add_get("/", index)
     app.router.add_static("/static/", WEBAPP_DIR, show_index=False)
