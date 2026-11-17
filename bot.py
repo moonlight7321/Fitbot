@@ -60,6 +60,7 @@ import calories
 import diary
 import exercises
 import orders
+import progress
 import planner
 import profiles
 import subscriptions as subs
@@ -985,10 +986,14 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
         await message.answer(plan.note)
         return
     markup = InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit"),
-            InlineKeyboardButton(text="🏋️ Упражнения", callback_data="ex:back"),
-        ]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Записать тренировку", callback_data="wk:pick")],
+            [
+                InlineKeyboardButton(text="📈 Прогресс", callback_data="wk:report"),
+                InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit"),
+            ],
+            [InlineKeyboardButton(text="🏋️ Упражнения", callback_data="ex:back")],
+        ]
     )
     await message.answer(planner.render(profile, plan), reply_markup=markup)
 
@@ -1544,6 +1549,198 @@ async def cmd_app(message: Message, state: FSMContext) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Прогресс: запись тренировок и отчёт
+# ---------------------------------------------------------------------------
+class WorkoutForm(StatesGroup):
+    input = State()
+
+
+async def _progress_report(user_id: int) -> str:
+    rows = await progress.history(user_id, 28)
+    total = await progress.count(user_id)
+    if not rows:
+        return ("<b>Прогресс</b>\n\nПока пусто. Запишите первую тренировку — "
+                "и здесь появится динамика рабочих весов.")
+
+    grouped: Dict[str, List] = {}
+    for row in rows:
+        grouped.setdefault(row["slug"], []).append(row)
+
+    lines = [f"<b>Прогресс</b>\nТренировок записано: {total}\n"]
+    items = []
+    for slug, history in grouped.items():
+        ex = exercises.by_slug(slug)
+        if ex is None:
+            continue
+        first = float(history[0]["weight"])
+        last = float(history[-1]["weight"])
+        items.append((last - first, ex.name_ru, first, last, history[-1]["done_on"]))
+
+    items.sort(reverse=True)
+    for delta, name, first, last, day in items[:8]:
+        if first <= 0:
+            lines.append(f"• {name}: свой вес, последний раз {day[8:10]}.{day[5:7]}")
+        elif abs(delta) < 0.01:
+            lines.append(f"• {name}: {last:g} кг (без изменений)")
+        else:
+            sign = "+" if delta > 0 else "−"
+            lines.append(f"• {name}: {first:g} → {last:g} кг ({sign}{abs(delta):g})")
+    return "\n".join(lines)
+
+
+@pay_router.callback_query(F.data == "wk:report")
+async def wk_report(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Прогресс доступен по подписке", show_alert=True)
+        return
+    if callback.message:
+        await callback.message.answer(await _progress_report(callback.from_user.id))
+    await callback.answer()
+
+
+@pay_router.message(Command("progress"))
+async def cmd_progress(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    if message.from_user is None:
+        return
+    if not await _ensure_access(message, message.from_user.id):
+        return
+    await message.answer(await _progress_report(message.from_user.id))
+
+
+@pay_router.callback_query(F.data == "wk:pick")
+async def wk_pick(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Запись тренировок доступна по подписке", show_alert=True)
+        return
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Сначала соберите план: 📋 Мой план", show_alert=True)
+        return
+
+    plan = planner.build(profile)
+    rows = [
+        [InlineKeyboardButton(text=f"День {i + 1} · {day.title}", callback_data=f"wk:day:{i}")]
+        for i, day in enumerate(plan.days)
+    ]
+    if callback.message:
+        await callback.message.answer(
+            "Какой день записываем?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("wk:day:"))
+async def wk_day(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        index = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный день", show_alert=True)
+        return
+    if callback.from_user is None:
+        return
+
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+    plan = planner.build(profile)
+    if index < 0 or index >= len(plan.days):
+        await callback.answer("Такого дня нет", show_alert=True)
+        return
+
+    day = plan.days[index]
+    await state.set_state(WorkoutForm.input)
+    await state.update_data(day_index=index)
+
+    names = "\n".join(f"• {slot.exercise.name_ru}" for slot in day.slots)
+    if callback.message:
+        await callback.message.answer(
+            f"<b>День {index + 1}: {day.title}</b>\n\n"
+            "Пришлите результаты — по строке на упражнение:\n"
+            "<code>приседания 60x8, 60x8, 60x7</code>\n\n"
+            f"{names}\n\n"
+            "Вес можно не указывать для упражнений с весом тела: <code>отжимания 0x12, 0x10</code>"
+        )
+    await callback.answer()
+
+
+@pay_router.message(StateFilter(WorkoutForm.input), F.text)
+async def wk_input(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    if text.startswith("/") or text in MENU_TEXTS:
+        await state.clear()
+        await message.answer("Запись отменена.")
+        return
+    if message.from_user is None:
+        return
+
+    data = await state.get_data()
+    index = int(data.get("day_index", 0))
+    profile = await profiles.get(message.from_user.id)
+    if profile is None:
+        await state.clear()
+        await message.answer("Анкета не найдена — соберите план заново.")
+        return
+
+    plan = planner.build(profile)
+    if index >= len(plan.days):
+        await state.clear()
+        await message.answer("План изменился. Откройте «📋 Мой план» и попробуйте снова.")
+        return
+    day = plan.days[index]
+    allowed = {slot.exercise.slug: slot.exercise for slot in day.slots}
+
+    records: List[progress.SetRecord] = []
+    errors: List[str] = []
+    touched: List[str] = []
+
+    for line in text.splitlines():
+        parsed = progress.parse_line(line)
+        if parsed is None:
+            if line.strip():
+                errors.append(f"«{line.strip()[:30]}» — формат: упражнение 60x8, 60x8")
+            continue
+        name, sets = parsed
+        ex = exercises.find_by_name_among(name, allowed)
+        if ex is None:
+            errors.append(f"«{name}» не нашёл в справочнике")
+            continue
+        if ex.slug not in allowed:
+            errors.append(f"«{ex.name_ru}» не входит в этот день")
+            continue
+        if ex.slug not in touched:
+            touched.append(ex.slug)
+        for weight, reps in sets:
+            records.append(progress.SetRecord(ex.slug, weight, reps))
+
+    if not records:
+        await message.answer(
+            "\n".join(errors) + "\n\nПопробуйте ещё раз, например: <code>приседания 60x8, 60x8</code>"
+        )
+        return
+
+    await progress.add_workout(message.from_user.id, index, day.title, records)
+    await state.clear()
+
+    lines = [f"<b>Записано: день {index + 1} · {day.title}</b>", ""]
+    for slug in touched:
+        ex = exercises.by_slug(slug)
+        sets = await progress.last_sets(message.from_user.id, slug)
+        advice = progress.next_advice(profile.goal, ex.equipment if ex else "", sets)
+        lines.append(f"• {ex.name_ru if ex else slug} → {advice}")
+    if errors:
+        lines.append("")
+        lines.append("<i>Пропущено: " + "; ".join(errors[:3]) + "</i>")
+
+    await message.answer("\n".join(lines))
+
+
 @pay_router.message(F.text, ~F.text.startswith("/"), ~F.text.in_(MENU_TEXTS))
 async def on_unknown(message: Message) -> None:
     """Сообщение без команды раньше просто игнорировалось («is not handled»).
@@ -2041,6 +2238,7 @@ async def _set_commands(bot: Bot) -> None:
         BotCommand(command="plan", description="Мой план тренировок"),
         BotCommand(command="calories", description="Калории и БЖУ"),
         BotCommand(command="diary", description="Дневник питания"),
+        BotCommand(command="progress", description="Прогресс тренировок"),
         BotCommand(command="sub", description="Подписка и пробный период"),
         BotCommand(command="help", description="Справка"),
     ]

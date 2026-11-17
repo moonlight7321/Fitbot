@@ -109,6 +109,57 @@ def by_group(group: str) -> List[Exercise]:
     return [e for e in EXERCISES if e.group == group]
 
 
+def _norm_name(value: str) -> str:
+    return (value or "").strip().lower().replace("ё", "е")
+
+
+def name_candidates(query: str) -> List[Exercise]:
+    """Кандидаты по названию: точное, начало, подстрока, совпадение слов.
+
+    Слова сравниваем по первым пяти буквам — «штангой» и «штанги» должны
+    считаться одним словом, иначе «жим лёжа со штангой» не находится.
+    """
+    q = _norm_name(query)
+    if not q:
+        return []
+    items = all_exercises()
+
+    exact = [ex for ex in items if _norm_name(ex.name_ru) == q]
+    if exact:
+        return exact
+    prefix = [ex for ex in items if _norm_name(ex.name_ru).startswith(q)]
+    if prefix:
+        return prefix
+    contains = [ex for ex in items if q in _norm_name(ex.name_ru)]
+    if contains:
+        return contains
+
+    tokens = [t for t in q.split() if len(t) > 2]
+    if len(tokens) > 1:
+        found = [
+            ex for ex in items
+            if all(t[:5] in _norm_name(ex.name_ru) for t in tokens)
+        ]
+        if found:
+            return sorted(found, key=lambda ex: len(ex.name_ru))
+    return []
+
+
+def find_by_name(query: str) -> Optional[Exercise]:
+    candidates = name_candidates(query)
+    return candidates[0] if candidates else None
+
+
+def find_by_name_among(query: str, slugs) -> Optional[Exercise]:
+    """Тот же поиск, но сначала пробуем упражнения из текущего дня."""
+    allowed = set(slugs)
+    candidates = name_candidates(query)
+    for ex in candidates:
+        if ex.slug in allowed:
+            return ex
+    return candidates[0] if candidates else None
+
+
 def by_slug(slug: str) -> Optional[Exercise]:
     return _BY_SLUG.get(slug)
 
