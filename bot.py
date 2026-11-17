@@ -1008,7 +1008,10 @@ async def _plan_weights(user_id: int, profile: "profiles.Profile", plan, week=No
             # две неудачи именно по весу — временно снижаем нагрузку
             if reasons.get("weight", 0) >= 2 and weight > 0:
                 weight = max(0.0, weight - progress._step_for(slot.exercise.equipment))
-            weights[slug] = "вес тела" if step["bodyweight"] else f"{weight:g} кг"
+            weights[slug] = {
+                "label": planner.format_weight(weight, slot.exercise.equipment),
+                "reps": None if step["bodyweight"] else step["reps"],
+            }
     return weights
 
 
@@ -2137,7 +2140,8 @@ async def wk_day(callback: CallbackQuery, state: FSMContext) -> None:
             "Если вводите детали — по строке на упражнение:\n"
             "<code>приседания 60x8, 60x8, 60x7</code>\n\n"
             f"{names}\n\n"
-            "Вес можно не указывать для упражнений с весом тела: <code>отжимания 0x12, 0x10</code>",
+            "Вес можно не указывать для упражнений с весом тела: <code>отжимания 0x12, 0x10</code>\n"
+            "Для гантелей указывайте вес одной гантели: <code>жим гантелей 10x12</code>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="✅ Всё выполнил", callback_data=f"wk:done:{index}")
             ]]),
@@ -2401,9 +2405,10 @@ async def _send_workout_reminders(bot: Bot) -> None:
 
         lines = [f"<b>Сегодня: день {index + 1} · {day.title}</b>", ""]
         for n, slot in enumerate(day.slots, 1):
-            label = weights.get(slot.exercise.slug)
-            suffix = f" · {label}" if label else ""
-            lines.append(f"{n}. {slot.exercise.name_ru} — {slot.sets}×{slot.reps}{suffix}")
+            target = weights.get(slot.exercise.slug) or {}
+            suffix = f" · {target['label']}" if target.get("label") else ""
+            reps_text = target.get("reps") or slot.reps
+            lines.append(f"{n}. {slot.exercise.name_ru} — {slot.sets}×{reps_text}{suffix}")
         lines.append("")
         lines.append("<i>Отметьте результат после тренировки — тогда прогрессия сработает.</i>")
 

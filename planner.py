@@ -172,6 +172,11 @@ def build(profile: "prof.Profile") -> Plan:
         )
     if excluded:
         note += f" Упражнения с нагрузкой на проблемную зону исключены."
+
+    note += (
+        " Если не знаете, с чего начать: штанга — примерно 40 % веса тела, "
+        "гантели — около 10 % на руку. Для гантелей указывайте вес одной гантели."
+    )
     if profile.goal == "mass":
         note += " Вес подбирайте так, чтобы последние 2 повтора давались тяжело, но без потери техники."
     elif profile.goal == "relief":
@@ -179,9 +184,20 @@ def build(profile: "prof.Profile") -> Plan:
     return Plan(days=days, note=note)
 
 
+def format_weight(weight: float, equipment: str) -> str:
+    """Гантели — вес одной гантели, остальное — общий вес снаряда."""
+    if not weight or weight <= 0:
+        return "вес тела"
+    if "гантел" in (equipment or "").lower():
+        return f"по {weight:g} кг"
+    return f"{weight:g} кг"
+
+
 def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
            deload: bool = False, weak_groups: set | None = None,
            pain_groups: set | None = None) -> str:
+    """weights: slug -> {"label": "по 10 кг", "reps": 10 или None}."""
+
     lines = [
         "<b>Ваш план на неделю</b>",
         f"{profile.goal_title} · {profile.experience_title} · {profile.equipment_title}",
@@ -203,17 +219,20 @@ def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
             if pain_groups and slot.exercise.group in pain_groups:
                 sets_text = max(2, sets_text - 1)
             suffix = ""
-            if weights:
-                label = weights.get(slot.exercise.slug)
-                if label:
-                    suffix = f" · <b>{label}</b>"
+            reps_text = slot.reps
+            target = (weights or {}).get(slot.exercise.slug)
+            if target:
+                if target.get("reps"):
+                    reps_text = str(target["reps"])
+                if target.get("label"):
+                    suffix = f" · <b>{target['label']}</b>"
             if pain_groups and slot.exercise.group in pain_groups:
                 mark = "🩹 "
             elif weak_groups and slot.exercise.group in weak_groups:
                 mark = "⚠️ "
             else:
                 mark = ""
-            lines.append(f"{n}. {mark}{slot.exercise.name_ru} — {sets_text}×{slot.reps}{suffix}")
+            lines.append(f"{n}. {mark}{slot.exercise.name_ru} — {sets_text}×{reps_text}{suffix}")
         lines.append("")
     lines.append(f"<i>{plan.note}</i>")
     return "\n".join(lines)

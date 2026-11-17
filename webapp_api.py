@@ -209,7 +209,10 @@ async def api_overview(request: web.Request) -> web.Response:
                     step = progress.next_plan(
                         profile.goal, slot.exercise.equipment, sets, allow_increase=allow
                     )
-                    weights[slug] = "вес тела" if step["bodyweight"] else f"{step['weight']:g} кг"
+                    weights[slug] = {
+                        "label": planner.format_weight(step["weight"], slot.exercise.equipment),
+                        "reps": None if step["bodyweight"] else step["reps"],
+                    }
 
             payload["week"] = {
                 "number": week["week"],
@@ -229,7 +232,8 @@ async def api_overview(request: web.Request) -> web.Response:
                         "slots": [
                             {"slug": s.exercise.slug, "name": s.exercise.name_ru,
                              "sets": _adjusted_sets(s, week["deload"], pain),
-                             "reps": s.reps, "weight": weights.get(s.exercise.slug)}
+                             "reps": (weights.get(s.exercise.slug) or {}).get("reps") or s.reps,
+                             "weight": (weights.get(s.exercise.slug) or {}).get("label")}
                             for s in day.slots
                         ],
                     }
