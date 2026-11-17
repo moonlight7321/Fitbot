@@ -2070,6 +2070,41 @@ async def part_reason(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+@pay_router.callback_query(F.data.startswith("wk:done:"))
+async def wk_done(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        index = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный день", show_alert=True)
+        return
+    if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Доступно по подписке", show_alert=True)
+        return
+
+    profile = await profiles.get(callback.from_user.id)
+    if profile is None:
+        await callback.answer("Сначала соберите план", show_alert=True)
+        return
+    plan = planner.build(profile)
+    if index < 0 or index >= len(plan.days):
+        await callback.answer("Такого дня нет", show_alert=True)
+        return
+
+    day = plan.days[index]
+    await progress.add_workout(callback.from_user.id, index, day.title, [])
+    await state.clear()
+
+    if callback.message:
+        await callback.message.answer(
+            f"Записал: день {index + 1} · {day.title} выполнен полностью.\n"
+            "Если что-то всё же не получилось — отметьте «🟡 Частично», "
+            "вес тогда не повысится."
+        )
+    await callback.answer("Записано")
+
+
 @pay_router.callback_query(F.data.startswith("wk:day:"))
 async def wk_day(callback: CallbackQuery, state: FSMContext) -> None:
     try:
@@ -2097,10 +2132,15 @@ async def wk_day(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.message:
         await callback.message.answer(
             f"<b>День {index + 1}: {day.title}</b>\n\n"
-            "Пришлите результаты — по строке на упражнение:\n"
+            "Если сделали всё по плану — нажмите «Всё выполнил». "
+            "Вписывать упражнения нужно только когда что-то не получилось.\n\n"
+            "Если вводите детали — по строке на упражнение:\n"
             "<code>приседания 60x8, 60x8, 60x7</code>\n\n"
             f"{names}\n\n"
-            "Вес можно не указывать для упражнений с весом тела: <code>отжимания 0x12, 0x10</code>"
+            "Вес можно не указывать для упражнений с весом тела: <code>отжимания 0x12, 0x10</code>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Всё выполнил", callback_data=f"wk:done:{index}")
+            ]]),
         )
     await callback.answer()
 
@@ -2369,7 +2409,8 @@ async def _send_workout_reminders(bot: Bot) -> None:
 
         markup = InlineKeyboardMarkup(
             inline_keyboard=[[
-                InlineKeyboardButton(text="✅ Записать", callback_data=f"wk:day:{index}"),
+                InlineKeyboardButton(text="✅ Всё по плану", callback_data=f"wk:done:{index}"),
+                InlineKeyboardButton(text="✍️ Детали", callback_data=f"wk:day:{index}"),
                 InlineKeyboardButton(text="🟡 Частично", callback_data=f"wk:part:{index}"),
                 InlineKeyboardButton(text="😕 Не смог", callback_data=f"wk:none:{index}"),
             ]]

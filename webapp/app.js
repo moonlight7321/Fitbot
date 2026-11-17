@@ -95,12 +95,15 @@ function renderJournal(data) {
     '<option value="' + i + '">День ' + (i + 1) + ' · ' + esc(day.title) + '</option>').join('');
   return ''
     + '<div class="card"><h2>Записать тренировку</h2>'
-    + '<p class="muted">По строке на упражнение: «приседания 60x8, 60x8». '
-    + 'Для веса тела пишите 0, например «отжимания 0x12».</p>'
+    + '<p class="muted">Если сделали всё по плану — просто нажмите «Всё выполнил». '
+    + 'Вписывать упражнения нужно только когда что-то не получилось.</p>'
     + '<select id="wk-day" class="select">' + options + '</select>'
     + '<textarea id="wk-text" class="textarea" rows="3" '
     + 'placeholder="приседания 60x8, 60x8, 60x7&#10;отжимания 0x12, 0x10"></textarea>'
-    + '<button class="primary" id="wk-save" style="margin-top:8px">Записать</button>'
+    + '<div class="input-row" style="margin-top:8px">'
+    + '<button class="primary" id="wk-complete">✅ Всё выполнил</button>'
+    + '<button class="ghost" id="wk-save">✍️ Записать детали</button>'
+    + '</div>'
     + '<div class="muted" style="margin-top:10px">Не получилось полностью?</div>'
     + '<div class="input-row">'
     + '<button class="ghost" id="wk-partial">🟡 Частично</button>'
@@ -298,6 +301,19 @@ function render() {
   }
 
   if (state.tab === "plan" && data.plan && data.plan.days.length) {
+    const complete = document.getElementById("wk-complete");
+    if (complete) complete.onclick = async () => {
+      const day = document.getElementById("wk-day").value;
+      try {
+        await api("/api/workouts/complete", {
+          method: "POST",
+          body: JSON.stringify({ day_index: Number(day) }),
+        });
+        toast("День записан полностью");
+        await loadOverview();
+      } catch (e) { toast("Не получилось записать"); }
+    };
+
     const save = document.getElementById("wk-save");
     if (save) save.onclick = async () => {
       const day = document.getElementById("wk-day").value;

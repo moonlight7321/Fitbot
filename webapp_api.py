@@ -308,6 +308,37 @@ async def api_progress(request: web.Request) -> web.Response:
     return web.json_response(await _progress_payload(user_id))
 
 
+async def api_workout_complete(request: web.Request) -> web.Response:
+    """Полное выполнение дня без ввода подходов."""
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+
+    data = await request.json()
+    try:
+        day_index = int(data.get("day_index", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad day"}, status=400)
+
+    profile = await profiles.get(user_id)
+    if profile is None:
+        return web.json_response({"error": "no profile"}, status=400)
+    plan = planner.build(profile)
+    if day_index < 0 or day_index >= len(plan.days):
+        return web.json_response({"error": "bad day"}, status=400)
+
+    await progress.add_workout(user_id, day_index, plan.days[day_index].title, [])
+    state = await progress.week_state(user_id, len(plan.days))
+    return web.json_response({
+        "ok": True,
+        "week": {
+            "number": state["week"], "done": state["done"],
+            "planned": state["planned"], "deload": state["deload"],
+        },
+    })
+
+
 async def api_workout_add(request: web.Request) -> web.Response:
     user_id = _user_id(request)
     assert user_id is not None
@@ -530,6 +561,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_get("/api/exercises", api_exercises)
     app.router.add_get("/api/progress", api_progress)
     app.router.add_post("/api/workouts", api_workout_add)
+    app.router.add_post("/api/workouts/complete", api_workout_complete)
     app.router.add_post("/api/checks", api_check)
     app.router.add_get("/api/exercise/{slug}", api_exercise)
     app.router.add_post("/api/diary/add", api_diary_add)
