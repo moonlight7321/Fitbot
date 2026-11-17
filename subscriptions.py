@@ -15,6 +15,8 @@ import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
+import dates
 from math import ceil
 from pathlib import Path
 from typing import Optional
@@ -74,17 +76,11 @@ def _now() -> datetime:
 
 
 def _fmt(value: datetime) -> str:
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    return dates.format_dt(value)
 
 
 def _parse(value) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        return datetime.strptime(str(value), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-    except (TypeError, ValueError):
-        logger.warning("Не разобрал дату подписки: %r", value)
-        return None
+    return dates.parse_dt(value)
 
 
 def _open() -> sqlite3.Connection:

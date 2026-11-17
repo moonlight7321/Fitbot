@@ -1935,6 +1935,12 @@ async def cb_order_approve(callback: CallbackQuery) -> None:
     if order is None:
         await callback.answer("Заявка не найдена", show_alert=True)
         return
+    if order.status == orders.STATUS_PAID:
+        await callback.answer("Заявка уже подтверждена", show_alert=True)
+        return
+    if order.status == orders.STATUS_REJECTED:
+        await callback.answer("Заявка уже отклонена", show_alert=True)
+        return
 
     # Сначала продлеваем доступ, потом закрываем заявку: если запись в БД
     # сорвётся, заявка останется активной и подтверждение можно повторить.

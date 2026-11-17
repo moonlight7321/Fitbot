@@ -15,6 +15,8 @@ import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
+import dates
 from pathlib import Path
 from typing import List, Optional
 
@@ -120,7 +122,7 @@ def _parse(value) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.strptime(str(value), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        return dates.parse_dt(value)
     except (TypeError, ValueError):
         return None
 
@@ -252,7 +254,11 @@ def _review_sync(order_id: int, reviewer: int, approve: bool) -> Order:
             raise OrderNotFound("заявка не найдена")
         order = _row_to_order(row)
         if order.status == STATUS_PAID:
-            return order                      # идемпотентно
+            if approve:
+                return order                  # идемпотентно
+            # Отклонить уже оплаченную нельзя: иначе пользователю придёт
+            # «отклонено», а доступ останется — путаница и жалобы.
+            raise OrderExpired("заявка уже подтверждена")
         if order.status == STATUS_REJECTED:
             raise OrderExpired("заявка уже отклонена")
         # Подтвердить можно и просроченную: перевод мог уйти за минуту до
