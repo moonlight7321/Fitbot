@@ -894,9 +894,22 @@ async def api_diary_clear(request: web.Request) -> web.Response:
 
 
 async def index(request: web.Request) -> web.StreamResponse:
-    response = web.FileResponse(WEBAPP_DIR / "index.html")
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return response
+    """Отдаём index с версией сборки: ссылки на статику всегда новые."""
+    html = (WEBAPP_DIR / "index.html").read_text(encoding="utf-8")
+    try:
+        build = str(int((WEBAPP_DIR / "app.js").stat().st_mtime))
+    except OSError:
+        build = "1"
+    html = html.replace("__BUILD__", build)
+    return web.Response(
+        text=html,
+        content_type="text/html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 def create_app(settings: Settings) -> web.Application:
