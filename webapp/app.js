@@ -68,9 +68,37 @@ function numberOptions(list, current) {
     + value + '</option>').join('');
 }
 
+const DRAFT_KEY = "fitbot_profile_draft";
+
+function loadDraft() {
+  try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}") || {}; }
+  catch (e) { return {}; }
+}
+
+function saveDraft() {
+  const form = document.getElementById("profile-form");
+  if (!form) return;
+  const value = id => {
+    const el = document.getElementById(id);
+    return el ? el.value : undefined;
+  };
+  const limits = Array.from(form.querySelectorAll("input[type=checkbox]:checked"))
+    .map(input => input.value);
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      goal: value("pf-goal"), experience: value("pf-exp"), equipment: value("pf-eq"),
+      days: value("pf-days"), minutes: value("pf-min"), activity: value("pf-act"),
+      sex: value("pf-sex"), age: value("pf-age"),
+      height: value("pf-height"), weight: value("pf-weight"),
+      limitations: limits,
+    }));
+  } catch (e) { /* приватный режим — просто не сохраняем */ }
+}
+
 function profileFormCard(data, opts) {
   const options = opts || {};
-  const raw = data.profile_raw || {};
+  const draft = data.profile_raw ? {} : loadDraft();
+  const raw = Object.assign({}, draft, data.profile_raw || {});
   const opt = data.options || {};
   const hidden = (data.profile_raw && !options.forceOpen) ? ' hidden' : '';
   const toggle = options.hideToggle ? '' : '<button class="ghost" id="profile-toggle">⚙️ Анкета и расчёт</button>';
@@ -121,6 +149,14 @@ function paywallCard(title, data) {
     + trial + paid + '</div>';
 }
 
+function bindDraft() {
+  const form = document.getElementById("profile-form");
+  if (!form || form.dataset.draftBound) return;
+  form.dataset.draftBound = "1";
+  form.addEventListener("input", saveDraft);
+  form.addEventListener("change", saveDraft);
+}
+
 async function saveProfile() {
   const value = id => document.getElementById(id).value;
   const limits = Array.from(
@@ -137,6 +173,7 @@ async function saveProfile() {
         limitations: limits,
       }),
     });
+    try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ }
     toast("Анкета сохранена");
     await loadOverview();
   } catch (e) { toast(e.message || "Проверьте цифры: рост 100–250, вес 30–250"); }
@@ -531,6 +568,7 @@ function render() {
       + profileFormCard(data, { forceOpen: true, hideToggle: true });
     const saveBtn = document.getElementById("profile-save");
     if (saveBtn) saveBtn.onclick = saveProfile;
+    bindDraft();
     return;
   }
 
@@ -577,6 +615,7 @@ function render() {
     };
     const save = document.getElementById("profile-save");
     if (save) save.onclick = saveProfile;
+    bindDraft();
   }
 
   if (state.tab === "plan" && state.editor) {
@@ -826,6 +865,14 @@ document.querySelectorAll(".tab").forEach(tab => {
     render();
     if (state.tab === "exercises" && !state.exercises) loadExercises();
   };
+});
+
+document.addEventListener("click", event => {
+  const target = event.target;
+  if (target && target.id === "profile-toggle") {
+    const form = document.getElementById("profile-form");
+    if (form) form.classList.toggle("hidden");
+  }
 });
 
 loadOverview().catch(() => {
