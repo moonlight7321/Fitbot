@@ -411,6 +411,20 @@ async def api_workout_custom(request: web.Request) -> web.Response:
             continue
         original = str(item.get("original", "")).strip()
         if original and original != slug:
+            source = exercises.by_slug(original)
+            if source is None or source.group != exercise.group:
+                return web.json_response(
+                    {"error": "bad replacement",
+                     "message": "Замена должна быть из той же группы мышц"},
+                    status=400,
+                )
+            excluded = planner.excluded_slugs(profile.limits)
+            if not planner._allowed(exercise, profile.experience, profile.equipment, excluded):
+                return web.json_response(
+                    {"error": "not allowed",
+                     "message": f"{exercise.name_ru}: не подходит под инвентарь или ограничения"},
+                    status=400,
+                )
             await progress.add_replacement(user_id, day_index, original, slug)
         try:
             sets = max(1, min(10, int(item.get("sets", 3))))
