@@ -299,5 +299,131 @@
     "protein": 14,
     "fat": 9,
     "carbs": 20
+  },
+  {
+    "name": "Картофельное пюре",
+    "kcal": 90,
+    "protein": 2,
+    "fat": 3,
+    "carbs": 14
+  },
+  {
+    "name": "Котлеты куриные",
+    "kcal": 220,
+    "protein": 16,
+    "fat": 14,
+    "carbs": 8
+  },
+  {
+    "name": "Котлеты говяжьи",
+    "kcal": 260,
+    "protein": 15,
+    "fat": 20,
+    "carbs": 6
+  },
+  {
+    "name": "Пельмени",
+    "kcal": 275,
+    "protein": 12,
+    "fat": 14,
+    "carbs": 27
+  },
+  {
+    "name": "Сосиски",
+    "kcal": 257,
+    "protein": 12,
+    "fat": 23,
+    "carbs": 2
+  },
+  {
+    "name": "Омлет",
+    "kcal": 154,
+    "protein": 10,
+    "fat": 11,
+    "carbs": 2
+  },
+  {
+    "name": "Йогурт натуральный",
+    "kcal": 60,
+    "protein": 5,
+    "fat": 3,
+    "carbs": 4
+  },
+  {
+    "name": "Творожная запеканка",
+    "kcal": 190,
+    "protein": 12,
+    "fat": 8,
+    "carbs": 20
+  },
+  {
+    "name": "Салат оливье",
+    "kcal": 200,
+    "protein": 6,
+    "fat": 16,
+    "carbs": 9
+  },
+  {
+    "name": "Шаурма",
+    "kcal": 220,
+    "protein": 12,
+    "fat": 10,
+    "carbs": 20
+  },
+  {
+    "name": "Сахар",
+    "kcal": 400,
+    "protein": 0,
+    "fat": 0,
+    "carbs": 100
+  },
+  {
+    "name": "Мёд",
+    "kcal": 304,
+    "protein": 0.3,
+    "fat": 0,
+    "carbs": 82
+  },
+  {
+    "name": "Хлеб белый",
+    "kcal": 265,
+    "protein": 8,
+    "fat": 3,
+    "carbs": 49
+  },
+  {
+    "name": "Фарш куриный",
+    "kcal": 143,
+    "protein": 17,
+    "fat": 8,
+    "carbs": 0
+  },
+  {
+    "name": "Фарш говяжий",
+    "kcal": 250,
+    "protein": 18,
+    "fat": 20,
+    "carbs": 0
+  },
+  {
+    "name": "Суп куриный",
+    "kcal": 45,
+    "protein": 3,
+    "fat": 2,
+    "carbs": 3
+  },
+  {
+    "name": "Кофе чёрный",
+    "kcal": 1,
+    "protein": 0.1,
+    "fat": 0,
+    "carbs": 0
+  },
+  {
+    "name": "Чай без сахара",
+    "kcal": 0,
+    "protein": 0,
+    "fat": 0,
+    "carbs": 0
   }
 ]

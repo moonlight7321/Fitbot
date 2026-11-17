@@ -1535,7 +1535,7 @@ async def dr_add(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.message:
         await callback.message.answer(
             "Что съели? Напишите продукт и граммы, можно несколько через запятую:\n"
-            "<code>курица 150, рис 200, яблоко 120</code>"
+            "<code>курица 150 г, рис 200 г, яблоко 120 г</code>"
         )
     await callback.answer()
 
@@ -1613,7 +1613,7 @@ async def diary_input(message: Message, state: FSMContext) -> None:
 
     if errors:
         await message.answer(
-            "\n".join(errors) + "\n\nПопробуйте ещё раз, например: <code>курица 150, рис 200</code>"
+            "\n".join(errors) + "\n\nПопробуйте ещё раз, например: <code>курица 150 г, рис 200 г</code>"
         )
         return
 

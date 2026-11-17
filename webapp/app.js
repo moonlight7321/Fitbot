@@ -480,7 +480,7 @@ function renderDiary(data) {
     + '<div class="macro"><b>' + Math.round(totals.fat) + '</b><span>жиры</span></div>'
     + '<div class="macro"><b>' + Math.round(totals.carbs) + '</b><span>углеводы</span></div>'
     + '</div>'
-    + '<div class="input-row"><input id="meal" type="text" placeholder="курица 150, рис 200" />'
+    + '<div class="input-row"><input id="meal" type="text" placeholder="курица 150 г, рис 200 г" />'
     + '<button class="primary" id="add-meal">Добавить</button></div>'
     + (list ? '<ul class="list" style="margin-top:10px">' + list + '</ul>' : '<p class="muted">Пока пусто.</p>')
     + '<button class="ghost" id="clear-diary" style="margin-top:10px">Очистить день</button>'

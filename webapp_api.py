@@ -871,7 +871,9 @@ async def api_diary_add(request: web.Request) -> web.Response:
             continue
         food = diary.find_food(match.group(1))
         if food is None:
-            errors.append(f"«{match.group(1).strip()}» не найден")
+            hints = diary.suggest(match.group(1))
+            hint_text = f" — похожие: {', '.join(hints)}" if hints else ""
+            errors.append(f"«{match.group(1).strip()}» не найден{hint_text}")
             continue
         await diary.add(user_id, food, grams)
         added += 1

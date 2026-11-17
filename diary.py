@@ -91,6 +91,17 @@ def find_food(query: str) -> Optional[Food]:
     for food in FOODS:
         if q in _norm(food.name):
             return food
+    # «куринные котлеты» vs «Котлеты куриные»: слова в другом порядке и с опечаткой
+    tokens = [t for t in q.split() if len(t) > 3]
+    if len(tokens) > 1:
+        found = [
+            food for food in FOODS
+            if all(any(word[:5] == token[:5] for word in _norm(food.name).split())
+                   for token in tokens)
+        ]
+        if found:
+            return sorted(found, key=lambda food: len(food.name))[0]
+
     if len(q) >= 4:
         stem = q[:4]
         for food in FOODS:
