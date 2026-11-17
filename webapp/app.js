@@ -67,7 +67,7 @@ function renderPlan(data) {
     ? data.plan.days.map((day, i) => ''
         + '<div class="day"><h3>День ' + (i + 1) + ' · ' + esc(day.title) + '</h3>'
         + '<ol class="list">' + day.slots.map(s =>
-            '<li>' + esc(s.name) + ' — ' + s.sets + '×' + esc(s.reps)
+            '<li>' + esc(s.name) + ' — ' + setsPhrase(s.sets, esc(s.reps))
             + (s.weight ? ' · <b>' + esc(s.weight) + '</b>' : '') + '</li>').join('') + '</ol></div>').join('')
     : '<p class="muted">Упражнений не нашлось под текущие условия.</p>';
 
@@ -149,6 +149,15 @@ function renderJournal(data) {
     + '<button class="ghost" data-feel="hard">😮‍💨 Тяжело</button>'
     + '</div></div>'
     + '<div id="wk-result" class="muted" style="margin-top:8px"></div></div>';
+}
+
+function setsPhrase(sets, reps) {
+  const mod100 = sets % 100, mod10 = sets % 10;
+  let word = "подходов";
+  if (mod100 >= 11 && mod100 <= 14) word = "подходов";
+  else if (mod10 === 1) word = "подход";
+  else if (mod10 >= 2 && mod10 <= 4) word = "подхода";
+  return sets + " " + word + " по " + reps + " повторений";
 }
 
 function reasonLabel(reason) {

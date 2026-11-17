@@ -45,10 +45,23 @@ EQUIPMENT_ALLOWED = {
 }
 
 GOAL_PARAMS = {
-    "mass": {"sets": 4, "reps": "6–10", "rest": 90},
-    "relief": {"sets": 3, "reps": "10–15", "rest": 60},
+    "mass": {"sets": 4, "reps": "8–10", "rest": 90},
+    "relief": {"sets": 3, "reps": "12–15", "rest": 60},
     "tone": {"sets": 3, "reps": "12–15", "rest": 60},
 }
+
+
+def sets_phrase(sets: int, reps: str) -> str:
+    """«4 подхода по 8–10 повторений» — понятнее, чем «4×8–10»."""
+    if sets % 100 in (11, 12, 13, 14):
+        word = "подходов"
+    elif sets % 10 == 1:
+        word = "подход"
+    elif sets % 10 in (2, 3, 4):
+        word = "подхода"
+    else:
+        word = "подходов"
+    return f"{sets} {word} по {reps} повторений"
 
 SPLITS = {
     2: [("Всё тело, день A", ["Ноги", "Грудь", "Спина", "Пресс"]),
@@ -255,7 +268,10 @@ def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
                 mark = "⚠️ "
             else:
                 mark = ""
-            lines.append(f"{n}. {mark}{slot.exercise.name_ru} — {sets_text}×{reps_text}{suffix}")
+            lines.append(
+                f"{n}. {mark}{slot.exercise.name_ru} — "
+                f"{sets_phrase(sets_text, reps_text)}{suffix}"
+            )
         lines.append("")
     lines.append(f"<i>{plan.note}</i>")
     return "\n".join(lines)
