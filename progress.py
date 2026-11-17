@@ -396,6 +396,70 @@ def _history_weeks_sync(user_id: int, limit: int) -> dict:
     }
 
 
+def _day_details_sync(user_id: int, limit: int) -> list:
+    import exercises as lib
+
+    anchor = _anchor_sync(user_id)
+    since = anchor.strftime("%Y-%m-%d") if anchor else "0000-01-01"
+
+    conn = _open()
+    try:
+        workouts = conn.execute(
+            "SELECT done_on, day_index FROM workouts WHERE user_id = ? AND done_on >= ?",
+            (user_id, since),
+        ).fetchall()
+        checks = conn.execute(
+            "SELECT week, day_index, done, created_at FROM workout_checks WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+        failures = conn.execute(
+            "SELECT week, day_index, slug, reason, created_at FROM failures WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    days: dict = {}
+
+    def bucket(date: str, day_index: int) -> dict:
+        key = (date, day_index)
+        if key not in days:
+            days[key] = {"date": date, "day_index": day_index, "status": "empty", "reasons": {}}
+        return days[key]
+
+    for row in workouts:
+        if row["done_on"] >= since:
+            bucket(row["done_on"], int(row["day_index"]))["status"] = "done"
+
+    for row in checks:
+        date = (row["created_at"] or "")[:10]
+        if date < since:
+            continue
+        value = int(row["done"])
+        item = bucket(date, int(row["day_index"]))
+        if value == 0 and item["status"] != "done":
+            item["status"] = "skip"
+        elif value == 2 and item["status"] != "done":
+            item["status"] = "partial"
+
+    for row in failures:
+        date = (row["created_at"] or "")[:10]
+        if date < since:
+            continue
+        ex = lib.by_slug(row["slug"])
+        group = ex.group if ex else "Другое"
+        item = bucket(date, int(row["day_index"]))
+        reasons = item["reasons"].setdefault(group, {})
+        reasons[row["reason"]] = reasons.get(row["reason"], 0) + 1
+
+    ordered = sorted(days.values(), key=lambda item: (item["date"], item["day_index"]), reverse=True)
+    return ordered[:limit]
+
+
+async def day_details(user_id: int, limit: int = 10) -> list:
+    return await asyncio.to_thread(_day_details_sync, user_id, limit)
+
+
 def _count_sync(user_id: int) -> int:
     conn = _open()
     try:

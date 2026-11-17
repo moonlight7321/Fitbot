@@ -1030,8 +1030,9 @@ async def _show_plan(message: Message, profile: "profiles.Profile") -> None:
             ],
             [
                 InlineKeyboardButton(text="📅 История", callback_data="wk:history"),
-                InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit"),
+                InlineKeyboardButton(text="📋 Детали", callback_data="wk:details"),
             ],
+            [InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="pf:edit")],
             [InlineKeyboardButton(text="🏋️ Упражнения", callback_data="ex:back")],
         ]
     )
@@ -1737,6 +1738,42 @@ async def _history_text(user_id: int) -> str:
     return "\n".join(lines)
 
 
+async def _details_text(user_id: int) -> str:
+    items = await progress.day_details(user_id, 10)
+    if not items:
+        return ("<b>Детали по дням</b>\n\nПока пусто: запишите тренировку "
+                "или отметьте частичное выполнение.")
+
+    status = {"done": "✅ сделано", "partial": "🟡 частично", "skip": "😕 пропуск"}
+    reason_names = {"reps": "не хватило повторений", "weight": "не осилил вес",
+                    "pain": "дискомфорт", "unknown": "без уточнения"}
+
+    lines = ["<b>Детали по дням</b>", ""]
+    for item in items:
+        day = item["date"]
+        label = f"{day[8:10]}.{day[5:7]} · День {item['day_index'] + 1} · {status.get(item['status'], '—')}"
+        if item["reasons"]:
+            parts = []
+            for group, reasons in list(item["reasons"].items())[:2]:
+                inner = ", ".join(f"{reason_names.get(r, r)} ×{c}" for r, c in reasons.items())
+                parts.append(f"{group}: {inner}")
+            label += " · " + "; ".join(parts)
+        lines.append(label)
+    return "\n".join(lines)
+
+
+@pay_router.callback_query(F.data == "wk:details")
+async def wk_details(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Доступно по подписке", show_alert=True)
+        return
+    if callback.message:
+        await callback.message.answer(await _details_text(callback.from_user.id))
+    await callback.answer()
+
+
 @pay_router.callback_query(F.data == "wk:history")
 async def wk_history(callback: CallbackQuery) -> None:
     if callback.from_user is None:
@@ -1935,13 +1972,20 @@ async def part_next(callback: CallbackQuery, state: FSMContext) -> None:
         for code, text in PARTIAL_REASONS.items()
     ])
     if callback.message:
+        if len(selected) >= 3:
+            hint = (
+                f"Выбрано упражнений: {len(selected)}. Если причины разные, "
+                "удобнее отметить по частям: сначала те, что не пошли по весу, "
+                "потом отдельно те, где был дискомфорт. Каждая отметка суммируется."
+            )
+        else:
+            hint = (
+                f"Выбрано упражнений: {len(selected)} — причина применится ко всем. "
+                "Если у разных упражнений причины разные, отметьте их отдельно: "
+                "каждая отметка суммируется, и расчёт отстающих групп будет точнее."
+            )
         await callback.message.answer(
-            "Что именно не получилось?\n\n"
-            f"Выбрано упражнений: {len(selected)} — причина применится ко всем.\n"
-            "<i>Если причины разные (например, колено болит, а жим не пошёл по весу), "
-            "отметьте их отдельными заходами: каждая отметка суммируется, "
-            "и расчёт отстающих групп будет точнее.</i>",
-            reply_markup=markup,
+            "Что именно не получилось?\n\n" + hint, reply_markup=markup
         )
     await callback.answer()
 
