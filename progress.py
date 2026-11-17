@@ -396,7 +396,7 @@ def _history_weeks_sync(user_id: int, limit: int) -> dict:
     }
 
 
-def _day_details_sync(user_id: int, limit: int) -> list:
+def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
     import exercises as lib
 
     anchor = _anchor_sync(user_id)
@@ -453,11 +453,11 @@ def _day_details_sync(user_id: int, limit: int) -> list:
         reasons[row["reason"]] = reasons.get(row["reason"], 0) + 1
 
     ordered = sorted(days.values(), key=lambda item: (item["date"], item["day_index"]), reverse=True)
-    return ordered[:limit]
+    return ordered[offset:offset + limit]
 
 
-async def day_details(user_id: int, limit: int = 10) -> list:
-    return await asyncio.to_thread(_day_details_sync, user_id, limit)
+async def day_details(user_id: int, limit: int = 10, offset: int = 0) -> list:
+    return await asyncio.to_thread(_day_details_sync, user_id, limit, offset)
 
 
 def _count_sync(user_id: int) -> int:

@@ -1738,11 +1738,23 @@ async def _history_text(user_id: int) -> str:
     return "\n".join(lines)
 
 
-async def _details_text(user_id: int) -> str:
-    items = await progress.day_details(user_id, 10)
+DETAILS_PAGE = 10
+
+
+def _details_markup(next_offset: int, has_more: bool):
+    if not has_more:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Показать ещё", callback_data=f"wk:details:{next_offset}")
+    ]])
+
+
+async def _details_text(user_id: int, offset: int = 0):
+    items = await progress.day_details(user_id, DETAILS_PAGE + 1, offset)
+    has_more = len(items) > DETAILS_PAGE
+    items = items[:DETAILS_PAGE]
     if not items:
-        return ("<b>Детали по дням</b>\n\nПока пусто: запишите тренировку "
-                "или отметьте частичное выполнение.")
+        return ("<b>Детали по дням</b>\n\nБольше записей нет.", False)
 
     status = {"done": "✅ сделано", "partial": "🟡 частично", "skip": "😕 пропуск"}
     reason_names = {"reps": "не хватило повторений", "weight": "не осилил вес",
@@ -1759,7 +1771,7 @@ async def _details_text(user_id: int) -> str:
                 parts.append(f"{group}: {inner}")
             label += " · " + "; ".join(parts)
         lines.append(label)
-    return "\n".join(lines)
+    return "\n".join(lines), has_more
 
 
 @pay_router.callback_query(F.data == "wk:details")
@@ -1769,8 +1781,37 @@ async def wk_details(callback: CallbackQuery) -> None:
     if not await subs.has_access(callback.from_user.id):
         await callback.answer("Доступно по подписке", show_alert=True)
         return
+    text, has_more = await _details_text(callback.from_user.id, 0)
     if callback.message:
-        await callback.message.answer(await _details_text(callback.from_user.id))
+        await callback.message.answer(
+            text, reply_markup=_details_markup(DETAILS_PAGE, has_more)
+        )
+    await callback.answer()
+
+
+@pay_router.callback_query(F.data.startswith("wk:details:"))
+async def wk_details_more(callback: CallbackQuery) -> None:
+    try:
+        offset = int((callback.data or "").split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректная страница", show_alert=True)
+        return
+    if callback.from_user is None:
+        return
+    if not await subs.has_access(callback.from_user.id):
+        await callback.answer("Доступно по подписке", show_alert=True)
+        return
+
+    text, has_more = await _details_text(callback.from_user.id, offset)
+    if callback.message:
+        try:
+            await callback.message.edit_text(
+                text, reply_markup=_details_markup(offset + DETAILS_PAGE, has_more)
+            )
+        except Exception:  # noqa: BLE001
+            await callback.message.answer(
+                text, reply_markup=_details_markup(offset + DETAILS_PAGE, has_more)
+            )
     await callback.answer()
 
 
