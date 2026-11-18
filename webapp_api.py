@@ -314,6 +314,16 @@ async def api_overview(request: web.Request) -> web.Response:
             payload["history"] = history
             payload["details"] = await progress.day_details(user_id, min(30, max(7, period)))
             payload["weight_log"] = await progress.weight_series(user_id, max(30, period))
+            payload["weight_trend"] = await progress.weight_trend(user_id, max(30, period))
+            if payload["weight_log"]:
+                last_weight = payload["weight_log"][-1]["weight"]
+                diff = last_weight - profile.weight
+                if abs(diff) >= 2:
+                    payload["weight_suggest"] = {
+                        "weight": last_weight,
+                        "profile_weight": profile.weight,
+                        "diff": round(diff, 1),
+                    }
         if profile.has_body_data and profile.activity:
             result = calories.compute(profile)
             payload["calories"] = {

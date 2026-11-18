@@ -374,10 +374,11 @@ function shortDate(iso) {
 }
 
 function sparkline(series) {
-  const points = series.points || [];
+  const points = (series.points || []).slice();
+  const trend = (series.trend || []).slice();
   if (!points.length) return '';
   const w = 340, h = 120, padL = 10, padR = 10, padT = 14, padB = 28;
-  const values = points.map(p => p.weight);
+  const values = points.map(p => p.weight).concat(trend.map(p => p.weight));
   const min = Math.min.apply(null, values);
   const max = Math.max.apply(null, values);
   const span = max - min || 1;
@@ -390,6 +391,14 @@ function sparkline(series) {
   const coords = points.map((p, i) =>
     (padL + i * step).toFixed(1) + ',' + y(p.weight).toFixed(1)
   ).join(' ');
+
+  let trendLine = '';
+  if (trend.length > 1) {
+    const trendCoords = trend.map((p, i) =>
+      (padL + i * step).toFixed(1) + ',' + y(p.weight).toFixed(1)).join(' ');
+    trendLine = '<polyline points="' + trendCoords + '" fill="none" stroke="#f0a94c" '
+      + 'stroke-width="2" stroke-dasharray="5 4" />';
+  }
   // До шести подписанных дат, равномерно по истории
   const tickCount = Math.min(6, points.length);
   const tickIndexes = [];
@@ -417,6 +426,7 @@ function sparkline(series) {
     + '<line x1="' + padL + '" y1="' + (h - padB) + '" x2="' + (w - padR) + '" y2="' + (h - padB)
     + '" stroke="#2c343f" stroke-width="1" />'
     + '<polyline points="' + coords + '" fill="none" stroke="#4f8cff" stroke-width="2.5" />'
+    + trendLine
     + dots
     + labels
     + '</svg></div>';
@@ -623,6 +633,7 @@ function renderProgressTab(data) {
   const days = details.map(item =>
     '<div class="muted">' + esc(item.date.slice(8, 10) + '.' + item.date.slice(5, 7))
     + ' · День ' + (item.day_index + 1) + ' · ' + (statusNames[item.status] || '—')
+    + (item.estimated ? ' · оценка: ' + item.estimated + ' подх.' : '')
     + Object.keys(item.reasons || {}).slice(0, 1).map(group =>
         ' · ' + esc(group) + ': ' + Object.keys(item.reasons[group]).length + ' прич.')
       .join('') + '</div>').join('');
@@ -663,7 +674,11 @@ function renderProgressTab(data) {
     + '<p class="muted">Взвешивайтесь примерно раз в две недели, утром натощак: '
     + 'так виден тренд, а случайные колебания не мешают.</p>'
     + ((data.weight_log || []).length
-        ? sparkline({ name: 'Вес, кг', points: data.weight_log.map(w => ({ date: w.date, weight: w.weight })) })
+        ? sparkline({
+            name: 'Вес, кг — точки и тренд за 14 дней',
+            points: data.weight_log.map(w => ({ date: w.date, weight: w.weight })),
+            trend: (data.weight_trend || []).map(w => ({ date: w.date, weight: w.weight })),
+          })
         : '<p class="muted">Пока нет записей. Добавьте первый вес ниже.</p>')
     + '<div class="input-row" style="margin-top:8px">'
     + '<input id="weight-input" class="select" type="number" min="30" max="250" step="0.1" placeholder="например 78.5">'
@@ -671,6 +686,13 @@ function renderProgressTab(data) {
     + '</div>'
     + '<button class="ghost" id="weight-apply" style="margin-top:6px">'
     + 'Записать и обновить норму калорий</button>'
+    + (data.weight_suggest
+        ? '<div class="card" style="margin-top:10px;background:#232a33">'
+          + '<div class="muted">Вес изменился с ' + data.weight_suggest.profile_weight
+          + ' до ' + data.weight_suggest.weight + ' кг. Обновить норму калорий?</div>'
+          + '<button class="primary" id="weight-suggest" style="margin-top:6px">Обновить анкету</button>'
+          + '</div>'
+        : '')
     + '</div>'
     + '<details class="card"' + (nutrition.length ? ' open' : '') + '>'
     + '<summary><b>🍽 Питание по дням</b></summary>'
@@ -904,9 +926,9 @@ function render() {
   }
 
   if (state.tab === "progress" && data.access) {
-    const saveWeight = async (apply) => {
+    const saveWeight = async (apply, override) => {
       const input = document.getElementById("weight-input");
-      const value = Number(input && input.value);
+      const value = override !== undefined ? Number(override) : Number(input && input.value);
       try {
         await api("/api/weight", {
           method: "POST",
@@ -920,6 +942,10 @@ function render() {
     if (weightSave) weightSave.onclick = () => saveWeight(false);
     const weightApply = document.getElementById("weight-apply");
     if (weightApply) weightApply.onclick = () => saveWeight(true);
+    const weightSuggest = document.getElementById("weight-suggest");
+    if (weightSuggest && data.weight_suggest) {
+      weightSuggest.onclick = () => saveWeight(true, data.weight_suggest.weight);
+    }
 
     const selected = new Set((data.reminders && data.reminders.days) || []);
     document.querySelectorAll("[data-rem-day]").forEach(btn => {

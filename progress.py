@@ -478,6 +478,12 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
             "SELECT week, day_index, slug, reason, created_at FROM failures WHERE user_id = ?",
             (user_id,),
         ).fetchall()
+        estimated_rows = conn.execute(
+            """SELECT w.done_on, w.day_index, SUM(ws.estimated) AS est
+               FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
+               WHERE w.user_id = ? GROUP BY w.done_on, w.day_index""",
+            (user_id,),
+        ).fetchall()
     finally:
         conn.close()
 
@@ -507,6 +513,13 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
             item["status"] = "skip"
         elif value == 2 and item["status"] != "done":
             item["status"] = "partial"
+
+    for row in estimated_rows:
+        date = row["done_on"] or ""
+        if date < since:
+            continue
+        item = bucket(date, int(row["day_index"]))
+        item["estimated"] = int(row["est"] or 0)
 
     for row in failures:
         date = (row["created_at"] or "")[:10]
@@ -610,6 +623,37 @@ async def add_weight(user_id: int, weight: float, day: str | None = None) -> Non
 
 async def weight_series(user_id: int, days: int = 90) -> list:
     return await asyncio.to_thread(_weight_series_sync, user_id, days)
+
+
+def _weight_trend_sync(user_id: int, days: int, window: int = 14) -> list:
+    """Скользящее среднее веса: сглаживает ежедневные колебания."""
+    points = _weight_series_sync(user_id, days)
+    if not points:
+        return []
+
+    result = []
+    for index, point in enumerate(points):
+        # окно по датам: все точки не старше point.date - window дней
+        try:
+            current = datetime.strptime(point["date"], "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        window_start = current - timedelta(days=window - 1)
+        values = []
+        for prev in points[: index + 1]:
+            try:
+                day = datetime.strptime(prev["date"], "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if day >= window_start:
+                values.append(prev["weight"])
+        if values:
+            result.append({"date": point["date"], "weight": round(sum(values) / len(values), 2)})
+    return result
+
+
+async def weight_trend(user_id: int, days: int = 90, window: int = 14) -> list:
+    return await asyncio.to_thread(_weight_trend_sync, user_id, days, window)
 
 
 def _next_day_sync(user_id: int, total_days: int) -> int:
