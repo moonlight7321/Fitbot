@@ -546,14 +546,27 @@ function barChart(title, points, valueKey, unit, target) {
   const values = points.map(p => Number(p[valueKey]) || 0);
   const max = Math.max.apply(null, values.concat(target ? [target] : [])) || 1;
 
+  const normLeft = target ? Math.min(100, Math.round((target / max) * 100)) : null;
+
   const rows = points.map(p => {
     const value = Number(p[valueKey]) || 0;
     const width = Math.max(2, Math.round((value / max) * 100));
-    return '<div class="bar-row">'
+    const norm = normLeft === null ? '' :
+      '<span class="bar-norm" style="left:' + normLeft + '%"></span>';
+    const label = p.items && p.items.length
+      ? '<details class="bar-wrap"><summary class="bar-row">'
+      : '<div class="bar-row">';
+    const close = p.items && p.items.length ? '</summary>' : '</div>';
+    const details = p.items && p.items.length
+      ? '<div class="bar-details">' + p.items.map(item =>
+          '<div class="muted">' + esc(item.text) + '</div>').join('') + '</div></details>'
+      : '';
+    return label
       + '<span class="bar-label">' + esc(p.label) + '</span>'
-      + '<span class="bar-track"><span class="bar-fill" style="width:' + width + '%"></span></span>'
+      + '<span class="bar-track"><span class="bar-fill" style="width:' + width + '%"></span>'
+      + norm + '</span>'
       + '<span class="bar-value">' + Math.round(value) + ' ' + unit + '</span>'
-      + '</div>';
+      + close + details;
   }).join('');
 
   return '<div class="chart"><div class="muted">' + esc(title) + '</div>'
@@ -575,7 +588,16 @@ function renderProgressTab(data) {
   const reminders = data.reminders || { days: [], time: "" };
   const statusNames = { done: "✅", partial: "🟡", skip: "😕", empty: "—" };
 
-  const tonnage = weekly.map(w => ({ label: "Нед " + w.week, tonnage: w.tonnage }));
+  const tonnage = weekly.map(w => ({
+    label: "Нед " + w.week,
+    tonnage: w.tonnage,
+    items: (w.days || []).map(day => ({
+      text: day.date.slice(8, 10) + '.' + day.date.slice(5, 7)
+        + ' · День ' + (day.day_index + 1)
+        + (day.title ? ' · ' + day.title : '')
+        + ' · ' + day.sets + ' подх. · ' + day.tonnage + ' кг',
+    })),
+  }));
   const workoutsBars = weekly.map(w => ({ label: "Нед " + w.week, workouts: w.workouts }));
 
   const exerciseCharts = series.map(sparkline).join('');

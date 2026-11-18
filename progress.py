@@ -593,7 +593,7 @@ def _weekly_volume_sync(user_id: int, weeks: int) -> list:
     conn = _open()
     try:
         rows = conn.execute(
-            """SELECT w.done_on, ws.weight, ws.reps
+            """SELECT w.done_on, w.day_index, w.day_title, ws.weight, ws.reps
                FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
                WHERE w.user_id = ?""",
             (user_id,),
@@ -610,21 +610,36 @@ def _weekly_volume_sync(user_id: int, weeks: int) -> list:
         week = max(1, (day - anchor).days // 7 + 1)
         if week < start_week or week > current:
             continue
-        bucket = buckets.setdefault(week, {"week": week, "tonnage": 0.0, "sets": 0, "days": set()})
+        bucket = buckets.setdefault(
+            week, {"week": week, "tonnage": 0.0, "sets": 0, "days": {}}
+        )
         weight = float(row["weight"] or 0)
         reps = int(row["reps"] or 0)
-        bucket["tonnage"] += weight * reps
+        tonnage = weight * reps
+        bucket["tonnage"] += tonnage
         bucket["sets"] += 1
-        bucket["days"].add(row["done_on"])
+
+        day = bucket["days"].setdefault(
+            row["done_on"],
+            {"date": row["done_on"], "day_index": int(row["day_index"] or 0),
+             "title": row["day_title"] or "", "sets": 0, "tonnage": 0.0},
+        )
+        day["sets"] += 1
+        day["tonnage"] += tonnage
 
     result = []
     for week in range(start_week, current + 1):
-        bucket = buckets.get(week, {"week": week, "tonnage": 0.0, "sets": 0, "days": set()})
+        bucket = buckets.get(week, {"week": week, "tonnage": 0.0, "sets": 0, "days": {}})
+        days = [
+            {**item, "tonnage": round(item["tonnage"])}
+            for item in sorted(bucket["days"].values(), key=lambda d: d["date"])
+        ]
         result.append({
             "week": week,
             "tonnage": round(bucket["tonnage"]),
             "sets": bucket["sets"],
-            "workouts": len(bucket["days"]),
+            "workouts": len(days),
+            "days": days,
         })
     return result
 
