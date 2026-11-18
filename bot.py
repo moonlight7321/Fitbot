@@ -585,12 +585,11 @@ MENU_TEXTS = {BTN_SUB, BTN_EX, BTN_PLAN, BTN_CAL, BTN_DIARY, BTN_APP, BTN_HELP, 
 
 
 def _public_menu() -> ReplyKeyboardMarkup:
+    # Всё остальное — в мини-аппе; в чате только подписка, помощь и вход в приложение.
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
-            [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_CAL)],
-            [KeyboardButton(text=BTN_DIARY), KeyboardButton(text=BTN_APP)],
-            [KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_APP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -604,9 +603,7 @@ def _owner_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=BTN_POST), KeyboardButton(text=BTN_TOPIC)],
             [KeyboardButton(text=BTN_BACKUP), KeyboardButton(text=BTN_APP)],
-            [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_EX)],
-            [KeyboardButton(text=BTN_PLAN), KeyboardButton(text=BTN_CAL)],
-            [KeyboardButton(text=BTN_DIARY), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_SUB), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -3304,14 +3301,10 @@ async def on_db_restore(message: Message) -> None:
 # ---------------------------------------------------------------------------
 async def _set_commands(bot: Bot) -> None:
     """Публичное меню — всем; админские команды — только владельцу."""
+    # В чате только вход в приложение, подписка и помощь — остальное в мини-аппе
     public = [
         BotCommand(command="start", description="Начать"),
-        BotCommand(command="plan", description="Мой план тренировок"),
-        BotCommand(command="calories", description="Калории и БЖУ"),
-        BotCommand(command="diary", description="Дневник питания"),
-        BotCommand(command="progress", description="Прогресс тренировок"),
-        BotCommand(command="remind", description="Напоминания о тренировках"),
-        BotCommand(command="history", description="История и стаж"),
+        BotCommand(command="app", description="Открыть приложение"),
         BotCommand(command="sub", description="Подписка и пробный период"),
         BotCommand(command="help", description="Справка"),
     ]
