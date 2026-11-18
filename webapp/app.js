@@ -591,17 +591,23 @@ function renderProgressTab(data) {
   const reminders = data.reminders || { days: [], time: "" };
   const statusNames = { done: "✅", partial: "🟡", skip: "😕", empty: "—" };
 
-  const tonnage = weekly.map(w => ({
-    label: "Нед " + w.week,
-    tonnage: w.tonnage,
-    items: (w.days || []).map(day => ({
-      text: day.date.slice(8, 10) + '.' + day.date.slice(5, 7)
-        + ' · День ' + (day.day_index + 1)
-        + (day.title ? ' · ' + day.title : '')
-        + ' · ' + day.sets + ' подх. · ' + day.tonnage + ' кг',
-    })),
+  const weekItems = week => (week.days || []).map(day => ({
+    text: day.date.slice(8, 10) + '.' + day.date.slice(5, 7)
+      + ' · День ' + (day.day_index + 1)
+      + (day.title ? ' · ' + day.title : '')
+      + ' · ' + day.sets + ' подх. · ' + day.tonnage + ' кг',
   }));
-  const workoutsBars = weekly.map(w => ({ label: "Нед " + w.week, workouts: w.workouts }));
+
+  const tonnage = weekly.map(w => ({
+    label: "Нед " + w.week + (w.estimated ? " *" : ""),
+    tonnage: w.tonnage,
+    items: weekItems(w),
+  }));
+  const workoutsBars = weekly.map(w => ({
+    label: "Нед " + w.week,
+    workouts: w.workouts,
+    items: weekItems(w),
+  }));
 
   const exerciseCharts = series.map(sparkline).join('');
   const trainCharts = exerciseCharts
@@ -647,6 +653,9 @@ function renderProgressTab(data) {
     + '<details class="card" open><summary><b>📈 График тренировок</b></summary>'
     + trainCharts
     + barChart('Объём за неделю (кг × повторения)', tonnage, 'tonnage', 'кг')
+    + (weekly.some(w => w.estimated)
+        ? '<div class="muted">* часть подходов восстановлена по плану — отмечены как оценка.</div>'
+        : '')
     + barChart('Тренировок за неделю', workoutsBars, 'workouts', 'шт')
     + '</details>'
 
@@ -659,7 +668,10 @@ function renderProgressTab(data) {
     + '<div class="input-row" style="margin-top:8px">'
     + '<input id="weight-input" class="select" type="number" min="30" max="250" step="0.1" placeholder="например 78.5">'
     + '<button class="primary" id="weight-save">Записать вес</button>'
-    + '</div></div>'
+    + '</div>'
+    + '<button class="ghost" id="weight-apply" style="margin-top:6px">'
+    + 'Записать и обновить норму калорий</button>'
+    + '</div>'
     + '<details class="card"' + (nutrition.length ? ' open' : '') + '>'
     + '<summary><b>🍽 Питание по дням</b></summary>'
     + caloriesChart
@@ -892,16 +904,22 @@ function render() {
   }
 
   if (state.tab === "progress" && data.access) {
-    const weightSave = document.getElementById("weight-save");
-    if (weightSave) weightSave.onclick = async () => {
+    const saveWeight = async (apply) => {
       const input = document.getElementById("weight-input");
       const value = Number(input && input.value);
       try {
-        await api("/api/weight", { method: "POST", body: JSON.stringify({ weight: value }) });
-        toast("Вес записан");
+        await api("/api/weight", {
+          method: "POST",
+          body: JSON.stringify({ weight: value, apply }),
+        });
+        toast(apply ? "Вес записан, норма пересчитана" : "Вес записан");
         await loadOverview();
       } catch (e) { toast(e.message || "Проверьте вес: 30–250 кг"); }
     };
+    const weightSave = document.getElementById("weight-save");
+    if (weightSave) weightSave.onclick = () => saveWeight(false);
+    const weightApply = document.getElementById("weight-apply");
+    if (weightApply) weightApply.onclick = () => saveWeight(true);
 
     const selected = new Set((data.reminders && data.reminders.days) || []);
     document.querySelectorAll("[data-rem-day]").forEach(btn => {

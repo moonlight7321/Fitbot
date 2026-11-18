@@ -499,7 +499,18 @@ async def api_weight(request: web.Request) -> web.Response:
         )
 
     await progress.add_weight(user_id, weight)
-    return web.json_response({"ok": True, "weight_log": await progress.weight_series(user_id, 90)})
+
+    # По желанию обновляем вес в анкете — тогда пересчитаются калории
+    if data.get("apply"):
+        profile = await profiles.get(user_id)
+        if profile is not None:
+            profile = dataclasses.replace(profile, weight=int(round(weight)))
+            await profiles.save(profile)
+
+    return web.json_response({
+        "ok": True,
+        "weight_log": await progress.weight_series(user_id, 90),
+    })
 
 
 async def api_trial(request: web.Request) -> web.Response:
