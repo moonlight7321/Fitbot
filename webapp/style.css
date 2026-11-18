@@ -69,6 +69,14 @@ body {
 .chips { margin-top: 4px; }
 summary.ghost { display: inline-block; margin-bottom: 4px; }
 summary::-webkit-details-marker { display: none; }
+details.card > summary { cursor: pointer; margin-bottom: 6px; }
+details.card > summary::-webkit-details-marker { display: none; }
+.bars { margin-top: 8px; display: grid; gap: 5px; }
+.bar-row { display: grid; grid-template-columns: 58px 1fr 82px; gap: 6px; align-items: center; font-size: 12px; }
+.bar-track { background: #232a33; border-radius: 6px; height: 10px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 6px; }
+.bar-value { text-align: right; color: var(--muted); }
+.bar-label { color: var(--muted); }
 .food-list { display: flex; flex-wrap: wrap; gap: 4px; max-height: 220px; overflow-y: auto; }
 .food-item { font-size: 12px; padding: 6px 8px; }
 .select, .textarea {

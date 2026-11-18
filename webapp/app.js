@@ -375,13 +375,13 @@ function shortDate(iso) {
 
 function sparkline(series) {
   const points = series.points || [];
-  if (points.length < 2) return '';
+  if (!points.length) return '';
   const w = 340, h = 120, padL = 10, padR = 10, padT = 14, padB = 28;
   const values = points.map(p => p.weight);
   const min = Math.min.apply(null, values);
   const max = Math.max.apply(null, values);
   const span = max - min || 1;
-  const step = (w - padL - padR) / (points.length - 1);
+  const step = points.length > 1 ? (w - padL - padR) / (points.length - 1) : 0;
   const y = v => h - padB - ((v - min) / span) * (h - padT - padB);
   const dots = points.map((p, i) => {
     const cx = padL + i * step, cy = y(p.weight);
@@ -541,14 +541,47 @@ function renderCalories(data) {
     + '</div>';
 }
 
+function barChart(title, points, valueKey, unit, target) {
+  if (!points.length) return '';
+  const values = points.map(p => Number(p[valueKey]) || 0);
+  const max = Math.max.apply(null, values.concat(target ? [target] : [])) || 1;
+
+  const rows = points.map(p => {
+    const value = Number(p[valueKey]) || 0;
+    const width = Math.max(2, Math.round((value / max) * 100));
+    return '<div class="bar-row">'
+      + '<span class="bar-label">' + esc(p.label) + '</span>'
+      + '<span class="bar-track"><span class="bar-fill" style="width:' + width + '%"></span></span>'
+      + '<span class="bar-value">' + Math.round(value) + ' ' + unit + '</span>'
+      + '</div>';
+  }).join('');
+
+  return '<div class="chart"><div class="muted">' + esc(title) + '</div>'
+    + '<div class="bars">' + rows + '</div>'
+    + (target ? '<div class="muted">Норма: ' + Math.round(target) + ' ' + unit + '</div>' : '')
+    + '</div>';
+}
+
 function renderProgressTab(data) {
   if (!data.access) return paywallCard("Прогресс", data);
   const series = (data.progress && data.progress.series) || [];
-  const nutrition = (data.diary_history || []).map(row => ({ date: row.day, weight: row.kcal }));
+  const weekly = (data.progress && data.progress.weekly) || [];
+  const nutrition = (data.diary_history || []).map(row => ({
+    label: row.day.slice(8, 10) + '.' + row.day.slice(5, 7),
+    kcal: row.kcal,
+  }));
   const history = data.history || { weeks: [], experience: 0, total: 0, streak: 0 };
   const details = data.details || [];
   const reminders = data.reminders || { days: [], time: "" };
   const statusNames = { done: "✅", partial: "🟡", skip: "😕", empty: "—" };
+
+  const tonnage = weekly.map(w => ({ label: "Нед " + w.week, tonnage: w.tonnage }));
+  const workoutsBars = weekly.map(w => ({ label: "Нед " + w.week, workouts: w.workouts }));
+
+  const exerciseCharts = series.map(sparkline).join('');
+  const trainCharts = exerciseCharts
+    || '<p class="muted">Пока нет весов в журнале: запишите тренировку через редактор — '
+      + 'тогда здесь появится линия по каждому упражнению.</p>';
 
   const weeks = (history.weeks || []).map(item =>
     '<div class="muted">Неделя ' + item.week + ': ✅ ' + item.done
@@ -571,9 +604,13 @@ function renderProgressTab(data) {
     '<button class="tab' + (state.period === d ? ' active' : '') + '" data-period="' + d + '">'
     + d + ' дн.</button>').join('');
 
+  const caloriesChart = nutrition.length
+    ? barChart('Калории по дням', nutrition, 'kcal', 'ккал', data.calories ? data.calories.target : null)
+    : '<p class="muted">Пока нет записей в дневнике.</p>';
+
   return ''
     + '<div class="card"><div class="input-row">' + periods + '</div></div>'
-    + '<div class="card"><h2>Прогресс</h2>'
+    + '<div class="card"><h2>Итог</h2>'
     + '<div class="muted">Тренировок: ' + (data.progress ? data.progress.count : 0)
     + ' · стаж ' + history.experience + ' нед.'
     + (history.streak ? ' · серия ' + history.streak + ' нед.' : '') + '</div>'
@@ -581,30 +618,32 @@ function renderProgressTab(data) {
         ? '<div class="muted">Отстают: ' + data.progress.weak_groups
             .map(w => esc(w.group) + ' (' + w.count + ')').join(', ') + '</div>' : '')
     + '</div>'
-    + '<div class="card"><h2>Графики тренировок</h2>'
-    + (series.filter(item => (item.points || []).length >= 2).map(sparkline).join('')
-        || '<p class="muted">График появится после двух тренировок с записанными весами: '
-          + 'запишите подходы и вес в редакторе тренировки.</p>')
-    + '</div>'
-    + '<div class="card"><h2>Питание по дням</h2>'
-    + (nutrition.length >= 2
-        ? sparkline({ name: 'Калории, ккал', points: nutrition })
-          + (data.calories ? '<div class="muted">Норма: ' + data.calories.target + ' ккал</div>' : '')
-        : '<p class="muted">График появится после двух дней с записями в дневнике. '
-          + 'Сейчас записей: ' + nutrition.length + '.</p>')
-    + '</div>'
-    + '<div class="card"><h2>История недель</h2>'
-    + (weeks || '<p class="muted">Пока пусто.</p>') + '</div>'
-    + '<div class="card"><h2>Детали по дням</h2>'
-    + (days || '<p class="muted">Пока пусто.</p>') + '</div>'
-    + '<div class="card"><h2>Напоминания</h2>'
+
+    + '<details class="card" open><summary><b>📈 График тренировок</b></summary>'
+    + trainCharts
+    + barChart('Объём за неделю (кг × повторения)', tonnage, 'tonnage', 'кг')
+    + barChart('Тренировок за неделю', workoutsBars, 'workouts', 'шт')
+    + '</details>'
+
+    + '<details class="card"' + (nutrition.length ? ' open' : '') + '>'
+    + '<summary><b>🍽 Питание по дням</b></summary>'
+    + caloriesChart
+    + '</details>'
+
+    + '<details class="card"><summary><b>📅 История недель</b></summary>'
+    + (weeks || '<p class="muted">Пока пусто.</p>') + '</details>'
+
+    + '<details class="card"><summary><b>📋 Детали по дням</b></summary>'
+    + (days || '<p class="muted">Пока пусто.</p>') + '</details>'
+
+    + '<details class="card"><summary><b>⏰ Напоминания</b></summary>'
     + '<div class="muted">Дни:</div><div class="input-row" style="flex-wrap:wrap">' + dayButtons + '</div>'
     + '<label class="field">Время<select id="rem-time" class="select">'
     + ["07:00", "09:00", "12:00", "18:00", "19:00", "21:00"].map(t =>
         '<option value="' + t + '"' + (t === reminders.time ? ' selected' : '') + '>' + t + '</option>').join('')
     + '</select></label>'
     + '<button class="primary" id="rem-save" style="margin-top:8px">Сохранить напоминания</button>'
-    + '</div>';
+    + '</details>';
 }
 
 function render() {

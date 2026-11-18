@@ -580,6 +580,55 @@ def _next_day_sync(user_id: int, total_days: int) -> int:
     return (int(row["day_index"]) + 1) % total_days
 
 
+def _weekly_volume_sync(user_id: int, weeks: int) -> list:
+    """Тоннаж и число тренировок по неделям — для графика прогресса."""
+    anchor = _anchor_sync(user_id)
+    if anchor is None:
+        return []
+
+    today = datetime.now(TIMEZONE).date()
+    current = max(1, (today - anchor).days // 7 + 1)
+    start_week = max(1, current - weeks + 1)
+
+    conn = _open()
+    try:
+        rows = conn.execute(
+            """SELECT w.done_on, ws.weight, ws.reps
+               FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
+               WHERE w.user_id = ?""",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    buckets: dict = {}
+    for row in rows:
+        try:
+            day = datetime.strptime(row["done_on"], "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            continue
+        week = max(1, (day - anchor).days // 7 + 1)
+        if week < start_week or week > current:
+            continue
+        bucket = buckets.setdefault(week, {"week": week, "tonnage": 0.0, "sets": 0, "days": set()})
+        weight = float(row["weight"] or 0)
+        reps = int(row["reps"] or 0)
+        bucket["tonnage"] += weight * reps
+        bucket["sets"] += 1
+        bucket["days"].add(row["done_on"])
+
+    result = []
+    for week in range(start_week, current + 1):
+        bucket = buckets.get(week, {"week": week, "tonnage": 0.0, "sets": 0, "days": set()})
+        result.append({
+            "week": week,
+            "tonnage": round(bucket["tonnage"]),
+            "sets": bucket["sets"],
+            "workouts": len(bucket["days"]),
+        })
+    return result
+
+
 def _count_sync(user_id: int) -> int:
     conn = _open()
     try:
@@ -608,6 +657,10 @@ async def next_day_index(user_id: int, total_days: int) -> int:
 
 async def count(user_id: int) -> int:
     return await asyncio.to_thread(_count_sync, user_id)
+
+
+async def weekly_volume(user_id: int, weeks: int = 8) -> list:
+    return await asyncio.to_thread(_weekly_volume_sync, user_id, weeks)
 
 
 async def history_weeks(user_id: int, limit: int = 8) -> dict:
