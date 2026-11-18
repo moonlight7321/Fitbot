@@ -582,6 +582,9 @@ function renderProgressTab(data) {
   const nutrition = (data.diary_history || []).map(row => ({
     label: row.day.slice(8, 10) + '.' + row.day.slice(5, 7),
     kcal: row.kcal,
+    items: (row.items || []).map(item => ({
+      text: item.name + ' ' + Math.round(item.grams) + ' г — ' + Math.round(item.kcal) + ' ккал',
+    })),
   }));
   const history = data.history || { weeks: [], experience: 0, total: 0, streak: 0 };
   const details = data.details || [];
@@ -647,6 +650,16 @@ function renderProgressTab(data) {
     + barChart('Тренировок за неделю', workoutsBars, 'workouts', 'шт')
     + '</details>'
 
+    + '<div class="card"><h2>Вес тела</h2>'
+    + '<p class="muted">Взвешивайтесь примерно раз в две недели, утром натощак: '
+    + 'так виден тренд, а случайные колебания не мешают.</p>'
+    + ((data.weight_log || []).length
+        ? sparkline({ name: 'Вес, кг', points: data.weight_log.map(w => ({ date: w.date, weight: w.weight })) })
+        : '<p class="muted">Пока нет записей. Добавьте первый вес ниже.</p>')
+    + '<div class="input-row" style="margin-top:8px">'
+    + '<input id="weight-input" class="select" type="number" min="30" max="250" step="0.1" placeholder="например 78.5">'
+    + '<button class="primary" id="weight-save">Записать вес</button>'
+    + '</div></div>'
     + '<details class="card"' + (nutrition.length ? ' open' : '') + '>'
     + '<summary><b>🍽 Питание по дням</b></summary>'
     + caloriesChart
@@ -879,6 +892,17 @@ function render() {
   }
 
   if (state.tab === "progress" && data.access) {
+    const weightSave = document.getElementById("weight-save");
+    if (weightSave) weightSave.onclick = async () => {
+      const input = document.getElementById("weight-input");
+      const value = Number(input && input.value);
+      try {
+        await api("/api/weight", { method: "POST", body: JSON.stringify({ weight: value }) });
+        toast("Вес записан");
+        await loadOverview();
+      } catch (e) { toast(e.message || "Проверьте вес: 30–250 кг"); }
+    };
+
     const selected = new Set((data.reminders && data.reminders.days) || []);
     document.querySelectorAll("[data-rem-day]").forEach(btn => {
       btn.onclick = () => {

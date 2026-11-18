@@ -312,7 +312,8 @@ async def api_overview(request: web.Request) -> web.Response:
             payload["progress"] = await _progress_payload(user_id, period)
             history = await progress.history_weeks(user_id, max(1, period // 7))
             payload["history"] = history
-            payload["details"] = await progress.day_details(user_id, 12)
+            payload["details"] = await progress.day_details(user_id, min(30, max(7, period)))
+            payload["weight_log"] = await progress.weight_series(user_id, max(30, period))
         if profile.has_body_data and profile.activity:
             result = calories.compute(profile)
             payload["calories"] = {
@@ -478,6 +479,27 @@ async def api_workout_custom(request: web.Request) -> web.Response:
     profile = dataclasses.replace(profile, day_cursor=(day_index + 1) % len(plan.days))
     await profiles.save(profile)
     return web.json_response({"ok": True, "records": len(records)})
+
+
+async def api_weight(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+
+    data = await request.json()
+    try:
+        weight = float(data.get("weight", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad weight"}, status=400)
+    if not 30 <= weight <= 250:
+        return web.json_response(
+            {"error": "weight range", "message": "Вес должен быть от 30 до 250 кг"},
+            status=400,
+        )
+
+    await progress.add_weight(user_id, weight)
+    return web.json_response({"ok": True, "weight_log": await progress.weight_series(user_id, 90)})
 
 
 async def api_trial(request: web.Request) -> web.Response:
@@ -689,7 +711,37 @@ async def api_workout_complete(request: web.Request) -> web.Response:
     if day_index < 0 or day_index >= len(plan.days):
         return web.json_response({"error": "bad day"}, status=400)
 
-    await progress.add_workout(user_id, day_index, plan.days[day_index].title, [])
+    day = plan.days[day_index]
+    week = await progress.week_state(user_id, len(plan.days))
+    breakdown = await progress.breakdown(user_id)
+    pain = {group for group, reasons in breakdown.items() if reasons.get("pain")}
+    allow = (
+        not week["deload"]
+        and not week["after_deload"]
+        and day_index not in week.get("partial", [])
+    )
+    if week["deload"]:
+        allow = False
+
+    records = []
+    for slot in day.slots:
+        count = max(2, slot.sets // 2) if week["deload"] else slot.sets
+        if slot.exercise.group in pain:
+            count = max(2, count - 1)
+        sets_history = await progress.last_sets(user_id, slot.exercise.slug)
+        if sets_history:
+            step = progress.next_plan(
+                profile.goal, slot.exercise.equipment, sets_history,
+                allow_increase=allow and slot.exercise.group not in pain,
+            )
+            weight = step["weight"]
+        else:
+            weight = planner.start_weight(profile.weight, slot.exercise)
+        reps = progress._top_reps(profile.goal)
+        for _ in range(count):
+            records.append(progress.SetRecord(slot.exercise.slug, weight, reps, estimated=True))
+
+    await progress.add_workout(user_id, day_index, day.title, records)
     profile = dataclasses.replace(profile, day_cursor=(day_index + 1) % len(plan.days))
     await profiles.save(profile)
     state = await progress.week_state(user_id, len(plan.days))
@@ -946,6 +998,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_post("/api/skip", api_skip)
     app.router.add_post("/api/profile", api_profile_save)
     app.router.add_post("/api/trial", api_trial)
+    app.router.add_post("/api/weight", api_weight)
     app.router.add_post("/api/reminders", api_reminders)
     app.router.add_get("/api/alternatives/{slug}", api_alternatives)
     app.router.add_post("/api/workouts/custom", api_workout_custom)

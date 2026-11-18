@@ -2201,7 +2201,30 @@ async def wk_done(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     day = plan.days[index]
-    await progress.add_workout(callback.from_user.id, index, day.title, [])
+    week_state = await progress.week_state(callback.from_user.id, len(plan.days))
+    breakdown = await progress.breakdown(callback.from_user.id)
+    pain = {group for group, reasons in breakdown.items() if reasons.get("pain")}
+
+    records = []
+    for slot in day.slots:
+        count = max(2, slot.sets // 2) if week_state["deload"] else slot.sets
+        if slot.exercise.group in pain:
+            count = max(2, count - 1)
+        sets_history = await progress.last_sets(callback.from_user.id, slot.exercise.slug)
+        if sets_history:
+            step = progress.next_plan(
+                profile.goal, slot.exercise.equipment, sets_history,
+                allow_increase=not week_state["deload"] and not week_state["after_deload"]
+                and slot.exercise.group not in pain,
+            )
+            weight = step["weight"]
+        else:
+            weight = planner.start_weight(profile.weight, slot.exercise)
+        reps = progress._top_reps(profile.goal)
+        for _ in range(count):
+            records.append(progress.SetRecord(slot.exercise.slug, weight, reps, estimated=True))
+
+    await progress.add_workout(callback.from_user.id, index, day.title, records)
     await state.clear()
     profile = replace(profile, day_cursor=(index + 1) % len(plan.days))
     await profiles.save(profile)
@@ -2220,7 +2243,8 @@ async def wk_done(callback: CallbackQuery, state: FSMContext) -> None:
     ]])
 
     if callback.message:
-        text = f"Записал: день {index + 1} · {day.title} выполнен полностью.\n"
+        text = (f"Записал: день {index + 1} · {day.title} выполнен полностью "
+                f"({len(records)} подходов по плану).\n")
         if not has_history:
             text += (
                 "\nЧтобы бот подсказывал вес, один раз впишите, с какими весами "

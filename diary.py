@@ -217,7 +217,25 @@ def _history_sync(user_id: int, days: int) -> List[Dict]:
                GROUP BY day ORDER BY day DESC LIMIT ?""",
             (user_id, days),
         ).fetchall()
-        return [dict(r) for r in reversed(rows)]
+        result = [dict(r) for r in reversed(rows)]
+
+        if result:
+            marks = ",".join("?" for _ in result)
+            items = conn.execute(
+                f"""SELECT day, name, grams, kcal FROM meals
+                    WHERE user_id = ? AND day IN ({marks}) ORDER BY id""",
+                (user_id, *[row["day"] for row in result]),
+            ).fetchall()
+            by_day: Dict[str, List[Dict]] = {}
+            for item in items:
+                by_day.setdefault(item["day"], []).append({
+                    "name": item["name"],
+                    "grams": item["grams"],
+                    "kcal": item["kcal"],
+                })
+            for row in result:
+                row["items"] = by_day.get(row["day"], [])
+        return result
     finally:
         conn.close()
 

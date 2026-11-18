@@ -35,7 +35,15 @@ CREATE TABLE IF NOT EXISTS workout_sets (
     slug       TEXT NOT NULL,
     set_no     INTEGER NOT NULL,
     weight     REAL NOT NULL,
-    reps       INTEGER NOT NULL
+    reps       INTEGER NOT NULL,
+    estimated  INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS weight_log (
+    user_id    INTEGER NOT NULL,
+    day        TEXT NOT NULL,
+    weight     REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, day)
 );
 CREATE TABLE IF NOT EXISTS day_replacements (
     user_id     INTEGER NOT NULL,
@@ -84,6 +92,7 @@ class SetRecord:
     slug: str
     weight: float
     reps: int
+    estimated: bool = False   # подход восстановлен по плану, а не введён вручную
 
 
 def _today() -> str:
@@ -100,6 +109,10 @@ def _open() -> sqlite3.Connection:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(workout_checks)").fetchall()}
     if "feel" not in columns:
         conn.execute("ALTER TABLE workout_checks ADD COLUMN feel TEXT DEFAULT ''")
+        conn.commit()
+    set_columns = {row[1] for row in conn.execute("PRAGMA table_info(workout_sets)").fetchall()}
+    if "estimated" not in set_columns:
+        conn.execute("ALTER TABLE workout_sets ADD COLUMN estimated INTEGER DEFAULT 0")
         conn.commit()
     return conn
 
@@ -136,8 +149,10 @@ def _add_sync(user_id: int, day_index: int, day_title: str,
         for record in records:
             counters[record.slug] = counters.get(record.slug, 0) + 1
             conn.execute(
-                "INSERT INTO workout_sets (workout_id, slug, set_no, weight, reps) VALUES (?, ?, ?, ?, ?)",
-                (workout_id, record.slug, counters[record.slug], record.weight, record.reps),
+                "INSERT INTO workout_sets (workout_id, slug, set_no, weight, reps, estimated) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (workout_id, record.slug, counters[record.slug], record.weight, record.reps,
+                 1 if record.estimated else 0),
             )
 
         # Записанная тренировка = выполненная: отметка нужна для разгрузки
@@ -561,6 +576,42 @@ async def build_plan(profile, user_id: int):
     return planner.build(profile, await replacements(user_id))
 
 
+def _add_weight_sync(user_id: int, weight: float, day: str) -> None:
+    conn = _open()
+    try:
+        conn.execute(
+            """INSERT INTO weight_log (user_id, day, weight, created_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id, day) DO UPDATE SET weight = excluded.weight""",
+            (user_id, day, weight,
+             datetime.now(TIMEZONE).strftime("%Y-%m-%dT%H:%M:%S")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _weight_series_sync(user_id: int, days: int) -> list:
+    since = (datetime.now(TIMEZONE) - timedelta(days=days)).strftime("%Y-%m-%d")
+    conn = _open()
+    try:
+        rows = conn.execute(
+            "SELECT day, weight FROM weight_log WHERE user_id = ? AND day >= ? ORDER BY day",
+            (user_id, since),
+        ).fetchall()
+        return [{"date": row["day"], "weight": float(row["weight"])} for row in rows]
+    finally:
+        conn.close()
+
+
+async def add_weight(user_id: int, weight: float, day: str | None = None) -> None:
+    await asyncio.to_thread(_add_weight_sync, user_id, weight, day or _today())
+
+
+async def weight_series(user_id: int, days: int = 90) -> list:
+    return await asyncio.to_thread(_weight_series_sync, user_id, days)
+
+
 def _next_day_sync(user_id: int, total_days: int) -> int:
     """Какой день показывать следующим: после последней тренировки цикла."""
     if total_days <= 0:
@@ -593,7 +644,7 @@ def _weekly_volume_sync(user_id: int, weeks: int) -> list:
     conn = _open()
     try:
         rows = conn.execute(
-            """SELECT w.done_on, w.day_index, w.day_title, ws.weight, ws.reps
+            """SELECT w.done_on, w.day_index, w.day_title, ws.weight, ws.reps, ws.estimated
                FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
                WHERE w.user_id = ?""",
             (user_id,),
@@ -618,6 +669,8 @@ def _weekly_volume_sync(user_id: int, weeks: int) -> list:
         tonnage = weight * reps
         bucket["tonnage"] += tonnage
         bucket["sets"] += 1
+        if int(row["estimated"] or 0):
+            bucket["estimated"] = bucket.get("estimated", 0) + 1
 
         day = bucket["days"].setdefault(
             row["done_on"],
@@ -638,6 +691,7 @@ def _weekly_volume_sync(user_id: int, weeks: int) -> list:
             "week": week,
             "tonnage": round(bucket["tonnage"]),
             "sets": bucket["sets"],
+            "estimated": bucket.get("estimated", 0),
             "workouts": len(days),
             "days": days,
         })
