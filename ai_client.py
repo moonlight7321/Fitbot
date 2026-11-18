@@ -206,19 +206,20 @@ class DeepSeekClient:
             raise AIError("DeepSeek вернул пустой ответ")
         return content
 
-    async def generate_post(self, topic: str) -> str:
+    async def generate_post(self, topic: str, hint: str = "") -> str:
         """Первый запрос: пост + промт картинки + самопроверка (три блока)."""
         safe_topic = (topic or "").strip()[:400] or "Свободная тема про спорт и питание"
+        extra = (hint or "").strip()[:500]
+        user_text = f"Тема поста: {safe_topic}\n"
+        if extra:
+            user_text += f"Дополнительные требования: {extra}\n"
+        user_text += (
+            "Сгенерируй пост по правилам и верни ответ строго в трёх блоках: "
+            "[ПОСТ], [ИДЕЯ ДЛЯ КАРТИНКИ], [ПРОВЕРКА]."
+        )
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"Тема поста: {safe_topic}\n"
-                    "Сгенерируй пост по правилам и верни ответ строго в трёх блоках: "
-                    "[ПОСТ], [ИДЕЯ ДЛЯ КАРТИНКИ], [ПРОВЕРКА]."
-                ),
-            },
+            {"role": "user", "content": user_text},
         ]
         return await self._chat(messages, temperature=0.8, max_tokens=1500)
 

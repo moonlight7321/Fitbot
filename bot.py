@@ -57,6 +57,7 @@ from scheduler import create_scheduler, describe_schedule
 import backup
 import calories
 import diary
+import content as topics
 import exercises
 import orders
 import progress
@@ -73,23 +74,6 @@ pay_router = Router()      # /sub и оплата — для всех польз
 CAPTION_LIMIT = 1024   # лимит подписи к фото в Telegram
 TEXT_LIMIT = 4000      # лимит текстового сообщения
 PENDING_LIMIT = 50     # сколько черновиков держим для кнопки «Опубликовать»
-
-# Чередование тем — ровно список из технического задания
-TOPIC_ROTATION: List[str] = [
-    "Короткая тренировка на 15–30 минут (можно без оборудования или с минимумом)",
-    "Простой приём для улучшения рациона: замена продукта, размер порции, планирование",
-    "Восстановление и сон как часть прогресса",
-    "полноценная тренировка на 45–60 минут (с разминкой, основной частью и заминкой, по блокам с упражнениями, подходами и повторениями)",
-    "полноценная тренировка на 45–60 минут для дома без оборудования",
-    "полноценная тренировка на конкретную группу мышц: ноги, спина, грудь или плечи (выбери сама)",
-    "экспресс-тренировка на 15–20 минут для занятых",
-    "полезный лайфхак или совет по восстановлению, питанию или технике упражнения",
-    "мини-чек-лист из 5–7 пунктов, например «как правильно разминаться» или «частые ошибки в приседаниях»",
-    "мотивационный пост с конкретным советом, а не просто цитатой",
-    "Разбор популярного мифа о спорте или питании",
-    "Мотивация и микрошаг на сегодня, который реально сделать в плотном графике",
-]
-
 
 @dataclass
 class GeneratedContent:
@@ -185,12 +169,12 @@ class OwnerOnlyMiddleware(BaseMiddleware):
 # ---------------------------------------------------------------------------
 # Генерация контента
 # ---------------------------------------------------------------------------
-async def generate_content(topic: str) -> GeneratedContent:
+async def generate_content(topic: str, hint: str = "") -> GeneratedContent:
     """Полный цикл: генерация → проверка объёма → проверка → исправление → картинка."""
     settings, ai = ctx.settings, ctx.ai
     notes: List[str] = []
 
-    raw = await ai.generate_post(topic)
+    raw = await ai.generate_post(topic, hint)
     sections = parse_sections(raw)
     post = clean_post(sections["post"])
     if not post:
@@ -471,9 +455,10 @@ async def autopost(bot: Bot) -> None:
         logger.warning("Автопостинг пропущен: CHANNEL_ID не задан")
         return
 
-    topic = ctx.rotation.next_topic()
+    item = ctx.rotation.next_topic()
+    topic = item["topic"]
     try:
-        content = await generate_content(topic)
+        content = await generate_content(topic, topics.hint_for(item))
     except AIError as exc:
         logger.error("Автопостинг: генерация не удалась — %s", exc)
         return
@@ -647,7 +632,8 @@ async def cb_sub_menu(callback: CallbackQuery) -> None:
 
 @router.message(Command("post"))
 async def cmd_post(message: Message) -> None:
-    await _generate_and_send(message, ctx.rotation.next_topic())
+    item = ctx.rotation.next_topic()
+    await _generate_and_send(message, item["topic"], topics.hint_for(item))
 
 
 @router.message(Command("topic"))
@@ -661,15 +647,16 @@ async def cmd_topic(message: Message, command: CommandObject) -> None:
         return
     if len(topic) > 300:  # защита от простыни текста в запросе
         topic = topic[:300]
-    await _generate_and_send(message, topic)
+    hint = f"Формат поста: {topics.random_format()}."
+    await _generate_and_send(message, topic, hint)
 
 
-async def _generate_and_send(message: Message, topic: str) -> None:
+async def _generate_and_send(message: Message, topic: str, hint: str = "") -> None:
     """Общая обёртка для /post и /topic: статус, генерация, отправка, ошибки."""
     status = await message.answer(f"⏳ Генерирую пост: <i>{html.escape(topic)}</i>")
 
     try:
-        content = await generate_content(topic)
+        content = await generate_content(topic, hint)
     except AIError as exc:
         logger.warning("Генерация не удалась: %s", exc)
         await _safe_edit(status, f"😔 Не получилось: {html.escape(str(exc))}\nПопробуйте ещё раз через минуту.")
@@ -3360,7 +3347,7 @@ async def main() -> None:
 
     ctx.settings = settings
     ctx.ai = DeepSeekClient(settings)
-    ctx.rotation = TopicRotation(TOPIC_ROTATION)
+    ctx.rotation = topics.Rotation()
 
     await _set_commands(bot)
 
