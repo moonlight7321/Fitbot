@@ -479,9 +479,10 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
             (user_id,),
         ).fetchall()
         estimated_rows = conn.execute(
-            """SELECT w.done_on, w.day_index, SUM(ws.estimated) AS est
+            """SELECT w.done_on, w.day_index, ws.slug, SUM(ws.estimated) AS est
                FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
-               WHERE w.user_id = ? GROUP BY w.done_on, w.day_index""",
+               WHERE w.user_id = ? AND ws.estimated = 1
+               GROUP BY w.done_on, w.day_index, ws.slug""",
             (user_id,),
         ).fetchall()
     finally:
@@ -519,7 +520,12 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
         if date < since:
             continue
         item = bucket(date, int(row["day_index"]))
-        item["estimated"] = int(row["est"] or 0)
+        item["estimated"] = item.get("estimated", 0) + int(row["est"] or 0)
+        exercise = lib.by_slug(row["slug"])
+        item.setdefault("estimated_items", []).append({
+            "name": exercise.name_ru if exercise else row["slug"],
+            "count": int(row["est"] or 0),
+        })
 
     for row in failures:
         date = (row["created_at"] or "")[:10]
@@ -530,6 +536,14 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
         item = bucket(date, int(row["day_index"]))
         reasons = item["reasons"].setdefault(group, {})
         reasons[row["reason"]] = reasons.get(row["reason"], 0) + 1
+
+    anchor = _anchor_sync(user_id)
+    for item in days.values():
+        try:
+            day_date = datetime.strptime(item["date"], "%Y-%m-%d").date()
+            item["week"] = max(1, (day_date - anchor).days // 7 + 1) if anchor else 1
+        except (TypeError, ValueError):
+            item["week"] = 0
 
     ordered = sorted(days.values(), key=lambda item: (item["date"], item["day_index"]), reverse=True)
     return ordered[offset:offset + limit]

@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS profiles (
     workout_time TEXT DEFAULT '',
     last_reminder TEXT DEFAULT '',
     day_cursor INTEGER DEFAULT -1,
+    weight_reminder INTEGER DEFAULT 0,
+    last_weight_reminder TEXT DEFAULT '',
     updated_at TEXT NOT NULL
 );
 """
@@ -86,6 +88,8 @@ class Profile:
     workout_time: str = ""
     last_reminder: str = ""
     day_cursor: int = -1
+    weight_reminder: bool = False
+    last_weight_reminder: str = ""
     replacements: dict = dataclass_field(default_factory=dict)
 
     @property
@@ -148,6 +152,8 @@ def _open() -> sqlite3.Connection:
         "workout_time": "ALTER TABLE profiles ADD COLUMN workout_time TEXT DEFAULT ''",
         "last_reminder": "ALTER TABLE profiles ADD COLUMN last_reminder TEXT DEFAULT ''",
         "day_cursor": "ALTER TABLE profiles ADD COLUMN day_cursor INTEGER DEFAULT -1",
+        "weight_reminder": "ALTER TABLE profiles ADD COLUMN weight_reminder INTEGER DEFAULT 0",
+        "last_weight_reminder": "ALTER TABLE profiles ADD COLUMN last_weight_reminder TEXT DEFAULT ''",
     }
     added = False
     for column, sql in migrations.items():
@@ -200,6 +206,8 @@ def _get_sync(user_id: int) -> Optional[Profile]:
             if "day_cursor" in keys and row["day_cursor"] is not None
             else -1
         ),
+        weight_reminder=bool(int(row["weight_reminder"] or 0)) if "weight_reminder" in keys else False,
+        last_weight_reminder=((row["last_weight_reminder"] if "last_weight_reminder" in keys else "") or ""),
         replacements=replacements,
     )
 
@@ -211,8 +219,9 @@ def _save_sync(profile: Profile) -> None:
             """
             INSERT INTO profiles (user_id, height, weight, experience, days, minutes,
                                   goal, equipment, limitations, sex, age, activity,
-                                  workout_days, workout_time, last_reminder, day_cursor, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  workout_days, workout_time, last_reminder, day_cursor,
+                                  weight_reminder, last_weight_reminder, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 height = excluded.height, weight = excluded.weight,
                 experience = excluded.experience, days = excluded.days,
@@ -221,13 +230,16 @@ def _save_sync(profile: Profile) -> None:
                 sex = excluded.sex, age = excluded.age, activity = excluded.activity,
                 workout_days = excluded.workout_days, workout_time = excluded.workout_time,
                 last_reminder = excluded.last_reminder, day_cursor = excluded.day_cursor,
+                weight_reminder = excluded.weight_reminder,
+                last_weight_reminder = excluded.last_weight_reminder,
                 updated_at = excluded.updated_at
             """,
             (profile.user_id, profile.height, profile.weight, profile.experience,
              profile.days, profile.minutes, profile.goal, profile.equipment,
              profile.limitations, profile.sex, profile.age, profile.activity,
              profile.workout_days, profile.workout_time, profile.last_reminder,
-             profile.day_cursor, _now()),
+             profile.day_cursor, 1 if profile.weight_reminder else 0,
+             profile.last_weight_reminder, _now()),
         )
         conn.commit()
     finally:
@@ -272,6 +284,48 @@ def _mark_reminder_sync(user_id: int, day: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _with_weight_reminders_sync() -> list:
+    conn = _open()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM profiles WHERE weight_reminder = 1"
+        ).fetchall()
+        result = []
+        for row in rows:
+            result.append(Profile(
+                user_id=row["user_id"], height=row["height"], weight=row["weight"],
+                experience=row["experience"], days=row["days"], minutes=row["minutes"],
+                goal=row["goal"], equipment=row["equipment"],
+                limitations=row["limitations"] or "", sex=row["sex"] or "",
+                age=int(row["age"] or 0), activity=row["activity"] or "",
+                workout_days=row["workout_days"] or "", workout_time=row["workout_time"] or "",
+                last_reminder=row["last_reminder"] or "",
+                day_cursor=int(row["day_cursor"] or -1) if row["day_cursor"] is not None else -1,
+                weight_reminder=True,
+                last_weight_reminder=row["last_weight_reminder"] or "",
+            ))
+        return result
+    finally:
+        conn.close()
+
+
+def _mark_weight_reminder_sync(user_id: int, day: str) -> None:
+    conn = _open()
+    try:
+        conn.execute("UPDATE profiles SET last_weight_reminder = ? WHERE user_id = ?", (day, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def with_weight_reminders() -> list:
+    return await asyncio.to_thread(_with_weight_reminders_sync)
+
+
+async def mark_weight_reminder(user_id: int, day: str) -> None:
+    await asyncio.to_thread(_mark_weight_reminder_sync, user_id, day)
 
 
 async def with_reminders() -> list:

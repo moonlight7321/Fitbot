@@ -220,6 +220,7 @@ async def api_overview(request: web.Request) -> web.Response:
             "limitations": sorted(profile.limits),
         }
         payload["reminders"] = {"days": profile.weekdays, "time": profile.workout_time}
+        payload["weight_reminder"] = bool(profile.weight_reminder)
         payload["profile"] = {
             "height": profile.height,
             "weight": profile.weight,
@@ -521,6 +522,21 @@ async def api_weight(request: web.Request) -> web.Response:
         "ok": True,
         "weight_log": await progress.weight_series(user_id, 90),
     })
+
+
+async def api_weight_reminder(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    data = await request.json()
+    enabled = bool(data.get("enabled", False))
+
+    profile = await profiles.get(user_id)
+    if profile is None:
+        return web.json_response({"error": "no profile"}, status=400)
+
+    profile = dataclasses.replace(profile, weight_reminder=enabled)
+    await profiles.save(profile)
+    return web.json_response({"ok": True, "enabled": enabled})
 
 
 async def api_trial(request: web.Request) -> web.Response:
@@ -1020,6 +1036,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_post("/api/profile", api_profile_save)
     app.router.add_post("/api/trial", api_trial)
     app.router.add_post("/api/weight", api_weight)
+    app.router.add_post("/api/weight-reminder", api_weight_reminder)
     app.router.add_post("/api/reminders", api_reminders)
     app.router.add_get("/api/alternatives/{slug}", api_alternatives)
     app.router.add_post("/api/workouts/custom", api_workout_custom)

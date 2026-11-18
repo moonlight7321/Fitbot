@@ -2877,6 +2877,58 @@ async def _send_workout_reminders(bot: Bot) -> None:
         logger.info("Напоминание о тренировке отправлено: %s", profile.user_id)
 
 
+async def _send_weight_reminders(bot: Bot) -> None:
+    tz = ZoneInfo(ctx.settings.timezone)
+    today = datetime.now(tz).date()
+
+    for profile in await profiles.with_weight_reminders():
+        if not await subs.has_access(profile.user_id):
+            continue
+        series = await progress.weight_series(profile.user_id, 3650)
+        last_date = None
+        if series:
+            try:
+                last_date = datetime.strptime(series[-1]["date"], "%Y-%m-%d").date()
+            except ValueError:
+                last_date = None
+        if last_date is not None and (today - last_date).days < 14:
+            continue
+        if profile.last_weight_reminder == today.strftime("%Y-%m-%d"):
+            continue
+
+        markup = None
+        if ctx.settings.webapp_url:
+            markup = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="Открыть приложение", web_app=WebAppInfo(url=ctx.settings.webapp_url)
+                )
+            ]])
+        try:
+            await bot.send_message(
+                profile.user_id,
+                "Пора взвеситься 🧭\n\n"
+                "Прошло больше двух недель с последнего взвешивания. "
+                "Лучше утром натощак — так тренд будет честнее.",
+                reply_markup=markup,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("Не смог отправить напоминание о весе %s", profile.user_id)
+            continue
+
+        await profiles.mark_weight_reminder(profile.user_id, today.strftime("%Y-%m-%d"))
+        logger.info("Напоминание о весе отправлено: %s", profile.user_id)
+
+
+async def _weight_loop(bot: Bot) -> None:
+    await asyncio.sleep(150)
+    while True:
+        try:
+            await _send_weight_reminders(bot)
+        except Exception:  # noqa: BLE001
+            logger.exception("Сбой в цикле напоминаний о весе")
+        await asyncio.sleep(6 * 60 * 60)
+
+
 async def _workout_loop(bot: Bot) -> None:
     await asyncio.sleep(30)
     while True:
@@ -3448,6 +3500,7 @@ async def main() -> None:
     backup_task = asyncio.create_task(_daily_backup(bot))
     reminder_task = asyncio.create_task(_reminder_loop(bot))
     workout_task = asyncio.create_task(_workout_loop(bot))
+    weight_task = asyncio.create_task(_weight_loop(bot))
 
     if settings.webapp_port:
         try:
@@ -3465,6 +3518,7 @@ async def main() -> None:
         backup_task.cancel()
         reminder_task.cancel()
         workout_task.cancel()
+        weight_task.cancel()
         if scheduler is not None:
             scheduler.shutdown(wait=False)
         await bot.session.close()

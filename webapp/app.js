@@ -663,11 +663,10 @@ function renderProgressTab(data) {
 
     + '<details class="card" open><summary><b>📈 График тренировок</b></summary>'
     + trainCharts
-    + barChart('Объём за неделю (кг × повторения)', tonnage, 'tonnage', 'кг')
-    + (weekly.some(w => w.estimated)
-        ? '<div class="muted">* часть подходов восстановлена по плану — отмечены как оценка.</div>'
-        : '')
     + barChart('Тренировок за неделю', workoutsBars, 'workouts', 'шт')
+    + (weekly.some(w => w.estimated)
+        ? '<div class="muted">* часть подходов восстановлена по плану.</div>'
+        : '')
     + '</details>'
 
     + '<div class="card"><h2>Вес тела</h2>'
@@ -684,8 +683,8 @@ function renderProgressTab(data) {
     + '<input id="weight-input" class="select" type="number" min="30" max="250" step="0.1" placeholder="например 78.5">'
     + '<button class="primary" id="weight-save">Записать вес</button>'
     + '</div>'
-    + '<button class="ghost" id="weight-apply" style="margin-top:6px">'
-    + 'Записать и обновить норму калорий</button>'
+    + '<label class="chk" style="margin-top:8px"><input type="checkbox" id="weight-reminder"'
+    + (data.weight_reminder ? ' checked' : '') + '> Напоминать о взвешивании раз в две недели</label>'
     + (data.weight_suggest
         ? '<div class="card" style="margin-top:10px;background:#232a33">'
           + '<div class="muted">Вес изменился с ' + data.weight_suggest.profile_weight
@@ -699,11 +698,28 @@ function renderProgressTab(data) {
     + caloriesChart
     + '</details>'
 
-    + '<details class="card"><summary><b>📅 История недель</b></summary>'
-    + (weeks || '<p class="muted">Пока пусто.</p>') + '</details>'
-
-    + '<details class="card"><summary><b>📋 Детали по дням</b></summary>'
-    + (days || '<p class="muted">Пока пусто.</p>') + '</details>'
+    + '<details class="card"><summary><b>📅 История</b></summary>'
+    + ((history.weeks || []).length
+        ? (history.weeks || []).map(week => {
+            const weekDays = details.filter(item => item.week === week.week);
+            const dayLines = weekDays.map(item =>
+              '<div class="muted">' + esc(item.date.slice(8, 10) + '.' + item.date.slice(5, 7))
+              + ' · День ' + (item.day_index + 1) + ' · ' + (statusNames[item.status] || '—')
+              + ((item.estimated_items || []).length
+                  ? ' · оценка: ' + item.estimated_items.map(x => esc(x.name) + ' ' + x.count).join(', ')
+                  : '')
+              + Object.keys(item.reasons || {}).slice(0, 1).map(group =>
+                  ' · ' + esc(group) + ': ' + Object.keys(item.reasons[group]).length + ' прич.')
+                .join('') + '</div>').join('');
+            return '<details><summary class="muted">Неделя ' + week.week + ': ✅ ' + week.done
+              + (week.partial ? ' · 🟡 ' + week.partial : '')
+              + (week.skipped ? ' · 😕 ' + week.skipped : '')
+              + (week.deload ? ' · разгрузка' : '') + '</summary>'
+              + (dayLines || '<div class="muted">Нет записей.</div>')
+              + '</details>';
+          }).join('')
+        : '<p class="muted">Пока пусто.</p>')
+    + '</details>'
 
     + '<details class="card"><summary><b>⏰ Напоминания</b></summary>'
     + '<div class="muted">Дни:</div><div class="input-row" style="flex-wrap:wrap">' + dayButtons + '</div>'
@@ -940,8 +956,16 @@ function render() {
     };
     const weightSave = document.getElementById("weight-save");
     if (weightSave) weightSave.onclick = () => saveWeight(false);
-    const weightApply = document.getElementById("weight-apply");
-    if (weightApply) weightApply.onclick = () => saveWeight(true);
+    const weightReminder = document.getElementById("weight-reminder");
+    if (weightReminder) weightReminder.onchange = async () => {
+      try {
+        await api("/api/weight-reminder", {
+          method: "POST",
+          body: JSON.stringify({ enabled: weightReminder.checked }),
+        });
+        toast(weightReminder.checked ? "Напоминание включено" : "Напоминание выключено");
+      } catch (e) { toast(e.message || "Не удалось сохранить"); }
+    };
     const weightSuggest = document.getElementById("weight-suggest");
     if (weightSuggest && data.weight_suggest) {
       weightSuggest.onclick = () => saveWeight(true, data.weight_suggest.weight);
