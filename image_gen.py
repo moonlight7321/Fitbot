@@ -37,6 +37,61 @@ FALLBACK_PROMPT = (
 )
 
 # --- Вариации. Kandinsky хорошо реагирует на конкретику, а не на «красиво» ---
+# Куда ставим сцену. Привязка к направлению поста: иначе все картинки
+# получаются «человек в зале» независимо от темы.
+CATEGORY_SCENES = {
+    "тренировка": [
+        "в тренажёрном зале у стойки со штангой",
+        "на площадке с турником во дворе",
+        "в домашней комнате с гантелями на полу",
+        "у гребного тренажёра в светлом зале",
+    ],
+    "растяжка": [
+        "на коврике у большого окна",
+        "в тихой студии йоги с деревянным полом",
+        "на траве в утреннем парке",
+        "дома на полу рядом с кроватью",
+    ],
+    "сигналы тела": [
+        "дома перед зеркалом, человек прислушивается к себе",
+        "на скамейке в раздевалке после тренировки",
+        "на кухне с чашкой чая, задумчивый взгляд",
+        "в кресле у окна с блокнотом",
+    ],
+    "питание": [
+        "на кухне с тарелкой и овощами на столе",
+        "на рынке у прилавка с зеленью",
+        "за обеденным столом с простой едой",
+        "у холодильника с продуктами в руках",
+    ],
+    "мифы": [
+        "дома с ноутбуком и блокнотом на диване",
+        "в кафе с чашкой кофе и телефоном",
+        "на скамейке в парке с наушниками",
+    ],
+    "привычки": [
+        "утром дома, кроссовки стоят у двери",
+        "за столом с календарём и ручкой",
+        "на лестнице между этажами с рюкзаком",
+    ],
+    "анатомия": [
+        "у зеркала, человек рассматривает плечо",
+        "в зале у скамьи, рука на мышце",
+        "дома на полу, опора на предплечья",
+    ],
+}
+
+DETAILS: List[str] = [
+    "рядом бутылка воды",
+    "на полу коврик",
+    "на фоне растения",
+    "полотенце на плече",
+    "кроссовки в кадре",
+    "часы на запястье",
+    "дневник и ручка рядом",
+    "солнечные блики на стене",
+]
+
 ANGLES: List[str] = [
     "крупный план, акцент на движении",
     "средний план, всё тело в кадре",
@@ -45,6 +100,9 @@ ANGLES: List[str] = [
     "вид сверху, геометрия пространства",
     "кадр через плечо, взгляд в зеркало",
     "фрагмент: кисти рук и гриф, детали хвата",
+    "съёмка с уровня пола, передний план размыт",
+    "широкий кадр с пространством вокруг",
+    "портрет по пояс, спокойный взгляд в камеру",
 ]
 
 LIGHTS: List[str] = [
@@ -70,6 +128,8 @@ FORMATS: List[str] = [
     "полуреалистичный цифровой рендер",
     "журнальная съёмка, естественные текстуры",
     "кадр из документального фильма о спорте",
+    "репортажная съёмка, лёгкое зерно",
+    "мягкий плёночный оттенок, 85 мм",
 ]
 
 NO_TEXT = "без текста, без надписей, без логотипов, без мультяшности"
@@ -88,7 +148,7 @@ def log_build_info() -> None:
         MODEL, TIMEOUT, RETRIES,
     )
 
-_last_combo: Tuple[str, ...] = ()
+_last_combos: List[Tuple[str, ...]] = []
 
 
 def _trim_scene(scene: str, limit: int) -> str:
@@ -102,19 +162,23 @@ def _trim_scene(scene: str, limit: int) -> str:
     return cut.rstrip(" ,;:.-")
 
 
-def build_prompt(base: str) -> str:
-    """Собирает промт: сцена от модели + случайные ракурс, свет, палитра, формат.
+def build_prompt(base: str, category: str | None = None) -> str:
+    """Собирает промт: сцена от модели + место по направлению + вариации съёмки.
 
-    Комбинацию стараемся не повторять подряд, иначе два поста подряд
-    получают визуально одинаковые картинки.
+    Место берётся из категории поста: растяжка — коврик, питание — кухня,
+    сигналы тела — дом у зеркала. Так картинка хотя бы соответствует теме,
+    а не показывает спортзал всегда.
     """
-    global _last_combo
-
     scene = (base or "").strip().rstrip(" .;,") or FALLBACK_PROMPT
     scene = _trim_scene(scene, MAX_BASE_CHARS)
 
+    scene_parts: List[str] = []
+    if category and category in CATEGORY_SCENES:
+        scene_parts.append(random.choice(CATEGORY_SCENES[category]))
+        scene_parts.append(random.choice(DETAILS))
+
     combo: Tuple[str, ...] = ()
-    for _ in range(6):
+    for _ in range(8):
         parts = [
             random.choice(ANGLES),
             random.choice(LIGHTS),
@@ -122,16 +186,18 @@ def build_prompt(base: str) -> str:
             random.choice(FORMATS),
         ]
         combo = tuple(parts)
-        if combo != _last_combo:
+        if combo not in _last_combos:
             break
-    _last_combo = combo
+    _last_combos.append(combo)
+    while len(_last_combos) > 3:
+        _last_combos.pop(0)
 
-    prompt = ", ".join([scene, *combo, NO_TEXT])
+    prompt = ", ".join([scene, *scene_parts, *combo, NO_TEXT])
     if len(prompt) > MAX_PROMPT_CHARS:
         # режем сцену, а не модификаторы: они и дают разнообразие
         overflow = len(prompt) - MAX_PROMPT_CHARS
         scene = _trim_scene(scene, max(60, len(scene) - overflow))
-        prompt = ", ".join([scene.rstrip(" ,"), *combo, NO_TEXT])
+        prompt = ", ".join([scene.rstrip(" ,"), *scene_parts, *combo, NO_TEXT])
     return prompt
 
 
@@ -163,9 +229,9 @@ def _generate_sync(prompt: str) -> bytes:
         return image.content
 
 
-async def fetch_image(prompt: str, settings) -> Optional[bytes]:
+async def fetch_image(prompt: str, settings, category: str | None = None) -> Optional[bytes]:
     """Возвращает байты картинки или None — пост уйдёт и без изображения."""
-    text = build_prompt(prompt)
+    text = build_prompt(prompt, category)
     if not AUTH_KEY:
         logger.error("Не задан GIGACHAT_AUTH_KEY в .env")
         return None

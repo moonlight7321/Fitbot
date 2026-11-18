@@ -169,7 +169,7 @@ class OwnerOnlyMiddleware(BaseMiddleware):
 # ---------------------------------------------------------------------------
 # Генерация контента
 # ---------------------------------------------------------------------------
-async def generate_content(topic: str, hint: str = "") -> GeneratedContent:
+async def generate_content(topic: str, hint: str = "", category: str = "") -> GeneratedContent:
     """Полный цикл: генерация → проверка объёма → проверка → исправление → картинка."""
     settings, ai = ctx.settings, ctx.ai
     notes: List[str] = []
@@ -212,7 +212,7 @@ async def generate_content(topic: str, hint: str = "") -> GeneratedContent:
     # --- Проверка и картинка идут параллельно: экономим время пользователя ---
     review_result, image_result = await asyncio.gather(
         ai.review_post(post),
-        fetch_image(image_prompt, settings),
+        fetch_image(image_prompt, settings, category),
         return_exceptions=True,
     )
 
@@ -458,7 +458,7 @@ async def autopost(bot: Bot) -> None:
     item = ctx.rotation.next_topic()
     topic = item["topic"]
     try:
-        content = await generate_content(topic, topics.hint_for(item))
+        content = await generate_content(topic, topics.hint_for(item), item["category"])
     except AIError as exc:
         logger.error("Автопостинг: генерация не удалась — %s", exc)
         return
@@ -633,7 +633,7 @@ async def cb_sub_menu(callback: CallbackQuery) -> None:
 @router.message(Command("post"))
 async def cmd_post(message: Message) -> None:
     item = ctx.rotation.next_topic()
-    await _generate_and_send(message, item["topic"], topics.hint_for(item))
+    await _generate_and_send(message, item["topic"], topics.hint_for(item), item["category"])
 
 
 @router.message(Command("topic"))
@@ -651,12 +651,12 @@ async def cmd_topic(message: Message, command: CommandObject) -> None:
     await _generate_and_send(message, topic, hint)
 
 
-async def _generate_and_send(message: Message, topic: str, hint: str = "") -> None:
+async def _generate_and_send(message: Message, topic: str, hint: str = "", category: str = "") -> None:
     """Общая обёртка для /post и /topic: статус, генерация, отправка, ошибки."""
     status = await message.answer(f"⏳ Генерирую пост: <i>{html.escape(topic)}</i>")
 
     try:
-        content = await generate_content(topic, hint)
+        content = await generate_content(topic, hint, category)
     except AIError as exc:
         logger.warning("Генерация не удалась: %s", exc)
         await _safe_edit(status, f"😔 Не получилось: {html.escape(str(exc))}\nПопробуйте ещё раз через минуту.")
