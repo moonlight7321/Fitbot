@@ -3347,7 +3347,11 @@ async def main() -> None:
 
     ctx.settings = settings
     ctx.ai = DeepSeekClient(settings)
-    ctx.rotation = topics.Rotation()
+    state_path = os.path.join(
+        os.path.dirname(os.path.abspath(os.getenv("DB_PATH", "fitbot.db"))),
+        "content_state.json",
+    )
+    ctx.rotation = topics.Rotation(state_path=state_path)
 
     await _set_commands(bot)
 

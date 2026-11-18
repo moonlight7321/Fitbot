@@ -99,13 +99,22 @@ TOPICS: List[Dict[str, str]] = [
 ]
 
 
-WINDOW = 4  # сколько последних постов помним, чтобы не повторяться
+# Окна «без повторов». Направлений и форматов ровно по семь: окно 7
+# невозможно (нечем заменить все семь), поэтому 6 — максимум.
+WINDOW_TOPICS = 8
+WINDOW_CATEGORIES = 6
+WINDOW_FORMATS = 6
 
 
 class Rotation:
-    """Темы, направления и форматы не повторяются в пределах четырёх постов."""
+    """Темы, направления и форматы не повторяются в пределах заданных окон.
 
-    def __init__(self, topics: List[Dict[str, str]] | None = None) -> None:
+    Состояние сохраняется в JSON рядом с базой: перезапуск не сбрасывает
+    очередь, и канал не начинает заново с первой темы.
+    """
+
+    def __init__(self, topics: List[Dict[str, str]] | None = None,
+                 state_path: str | None = None) -> None:
         source = topics or TOPICS
         self._by_category: Dict[str, List[str]] = {}
         for item in source:
@@ -118,10 +127,53 @@ class Rotation:
         self._recent_categories: list = []
         self._recent_topics: list = []
         self._recent_formats: list = []
+        self._state_path = state_path
+        self._load()
 
-    def _remember(self, bucket: list, value: str) -> None:
+    def _load(self) -> None:
+        if not self._state_path:
+            return
+        try:
+            import json
+            from pathlib import Path
+
+            data = json.loads(Path(self._state_path).read_text(encoding="utf-8"))
+            self._cat_index = int(data.get("cat_index", 0))
+            self._format_index = int(data.get("format_index", 0))
+            self._topic_index.update(
+                {k: int(v) for k, v in (data.get("topic_index") or {}).items()}
+            )
+            self._recent_categories = list(data.get("recent_categories") or [])
+            self._recent_topics = list(data.get("recent_topics") or [])
+            self._recent_formats = list(data.get("recent_formats") or [])
+        except (OSError, ValueError, TypeError):
+            # нет файла или он битый — начинаем с чистого состояния
+            pass
+
+    def _save(self) -> None:
+        if not self._state_path:
+            return
+        try:
+            import json
+            from pathlib import Path
+
+            Path(self._state_path).write_text(
+                json.dumps({
+                    "cat_index": self._cat_index,
+                    "format_index": self._format_index,
+                    "topic_index": self._topic_index,
+                    "recent_categories": self._recent_categories,
+                    "recent_topics": self._recent_topics,
+                    "recent_formats": self._recent_formats,
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+    def _remember(self, bucket: list, value: str, window: int) -> None:
         bucket.append(value)
-        while len(bucket) > WINDOW:
+        while len(bucket) > window:
             bucket.pop(0)
 
     def next_topic(self) -> Dict[str, str]:
@@ -151,9 +203,10 @@ class Rotation:
                 fmt = candidate
                 break
 
-        self._remember(self._recent_categories, category)
-        self._remember(self._recent_topics, topic)
-        self._remember(self._recent_formats, fmt)
+        self._remember(self._recent_categories, category, WINDOW_CATEGORIES)
+        self._remember(self._recent_topics, topic, WINDOW_TOPICS)
+        self._remember(self._recent_formats, fmt, WINDOW_FORMATS)
+        self._save()
         return {"topic": topic, "category": category, "format": fmt}
 
     def random_format(self) -> str:
