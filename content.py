@@ -96,22 +96,62 @@ TOPICS: List[Dict[str, str]] = [
 ]
 
 
+WINDOW = 4  # сколько последних постов помним, чтобы не повторяться
+
+
 class Rotation:
-    """Выдаёт темы по кругу и подбирает формат, не повторяя предыдущий."""
+    """Темы, направления и форматы не повторяются в пределах четырёх постов."""
 
     def __init__(self, topics: List[Dict[str, str]] | None = None) -> None:
-        self._topics = topics or TOPICS
-        self._index = 0
-        self._last_format: str | None = None
+        source = topics or TOPICS
+        self._by_category: Dict[str, List[str]] = {}
+        for item in source:
+            self._by_category.setdefault(item["category"], []).append(item["topic"])
+
+        self._categories = list(self._by_category.keys())
+        self._cat_index = 0
+        self._topic_index: Dict[str, int] = {cat: 0 for cat in self._categories}
+        self._format_index = 0
+        self._recent_categories: list = []
+        self._recent_topics: list = []
+        self._recent_formats: list = []
+
+    def _remember(self, bucket: list, value: str) -> None:
+        bucket.append(value)
+        while len(bucket) > WINDOW:
+            bucket.pop(0)
 
     def next_topic(self) -> Dict[str, str]:
-        base = self._topics[self._index % len(self._topics)]
-        self._index += 1
+        # направление: берём следующее по кругу, пропуская те, что были в окне
+        category = self._categories[self._cat_index % len(self._categories)]
+        for _ in range(len(self._categories)):
+            candidate = self._categories[self._cat_index % len(self._categories)]
+            self._cat_index += 1
+            if candidate not in self._recent_categories:
+                category = candidate
+                break
 
-        choices = [fmt for fmt in FORMATS if fmt != self._last_format] or FORMATS
-        fmt = random.choice(choices)
-        self._last_format = fmt
-        return {"topic": base["topic"], "category": base["category"], "format": fmt}
+        topics_list = self._by_category[category]
+        topic = topics_list[self._topic_index[category] % len(topics_list)]
+        for _ in range(len(topics_list)):
+            candidate = topics_list[self._topic_index[category] % len(topics_list)]
+            self._topic_index[category] += 1
+            if candidate not in self._recent_topics:
+                topic = candidate
+                break
+
+        fmt = FORMATS[self._format_index % len(FORMATS)]
+        for _ in range(len(FORMATS)):
+            candidate = FORMATS[self._format_index % len(FORMATS)]
+            self._format_index += 1
+            if candidate not in self._recent_formats:
+                fmt = candidate
+                break
+
+        self._remember(self._recent_categories, category)
+        self._remember(self._recent_topics, topic)
+        self._remember(self._recent_formats, fmt)
+        return {"topic": topic, "category": category, "format": fmt}
 
     def random_format(self) -> str:
         return random.choice(FORMATS)
