@@ -271,19 +271,25 @@ function renderEditor(data) {
   const day = data.plan.days[index];
   // Только плановые значения: прошлые подходы не подставляем, иначе
   // человек воспринимает их как новый, более лёгкий план.
-  const items = day.slots.map(slot => {
-    const sets = slot.sets;
-    const repsList = repScheme(slot.reps, sets);
-    return {
-      slug: slot.slug,
-      original: slot.slug,
-      name: slot.name,
-      sets: sets,
-      repsList: repsList,
-      reps: repsList[0],
-      weight: slot.weight_value || 0,
-    };
-  });
+  // Если редактор уже открыт — сохраняем введённые значения при перерисовке.
+  let items;
+  if (state.editor && state.editor.dayIndex === index) {
+    items = state.editor.items;
+  } else {
+    items = day.slots.map(slot => {
+      const sets = slot.sets;
+      const repsList = repScheme(slot.reps, sets);
+      return {
+        slug: slot.slug,
+        original: slot.slug,
+        name: slot.name,
+        sets: sets,
+        repsList: repsList,
+        reps: repsList[0],
+        weight: slot.weight_value || 0,
+      };
+    });
+  }
   state.editor = { dayIndex: index, items: items };
 
   const rows = items.map((item, i) =>
@@ -577,13 +583,16 @@ function renderCalories(data) {
 function barChart(title, points, valueKey, unit, target) {
   if (!points.length) return '';
   const values = points.map(p => Number(p[valueKey]) || 0);
+  if (!values.some(value => value > 0) && !target) {
+    return '<p class="muted">Нет данных за выбранный период.</p>';
+  }
   const max = Math.max.apply(null, values.concat(target ? [target] : [])) || 1;
 
   const normLeft = target ? Math.min(100, Math.round((target / max) * 100)) : null;
 
   const rows = points.map(p => {
     const value = Number(p[valueKey]) || 0;
-    const width = Math.max(2, Math.round((value / max) * 100));
+    const width = value > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0;
     const norm = normLeft === null ? '' :
       '<span class="bar-norm" style="left:' + normLeft + '%"></span>';
     const label = p.items && p.items.length
