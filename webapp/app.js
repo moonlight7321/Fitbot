@@ -957,6 +957,11 @@ function render() {
               btn.textContent = item.name;
               btn.classList.remove("active");
               box.classList.add("hidden");
+              box.innerHTML = "";
+              if (altScrollY !== null) {
+                window.scrollTo({ top: altScrollY, behavior: "smooth" });
+                altScrollY = null;
+              }
             };
           });
         } catch (e) {
