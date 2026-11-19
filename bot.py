@@ -2855,7 +2855,7 @@ async def _send_workout_reminders(bot: Bot) -> None:
             reps_text = target.get("reps") or slot.reps
             lines.append(
                 f"{n}. {slot.exercise.name_ru} — "
-                f"{planner.sets_phrase(slot.sets, reps_text)}{suffix}"
+                f"{planner.sets_phrase(slot.sets, reps_text, profile.goal)}{suffix}"
             )
         lines.append("")
         lines.append("<i>Отметьте результат после тренировки — тогда прогрессия сработает.</i>")

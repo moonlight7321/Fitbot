@@ -52,8 +52,25 @@ GOAL_PARAMS = {
 }
 
 
-def sets_phrase(sets: int, reps: str) -> str:
-    """«4 подхода по 8–10 повторений» — понятнее, чем «4×8–10»."""
+def _top_reps(reps: str) -> int:
+    """Верхняя граница диапазона: «8–10» → 10, «12–15» → 15, «10» → 10."""
+    digits = [int(part) for part in reps.replace("–", "-").replace("—", "-").split("-") if part.strip().isdigit()]
+    return max(digits) if digits else 10
+
+
+def rep_scheme(goal: str, sets: int, top: int) -> List[int]:
+    """Повторения по подходам с учётом усталости: 10, 9, 8, 8.
+
+    К последним подходам человек объективно делает меньше — план это учитывает,
+    а не требует одинаковых цифр во всех подходах.
+    """
+    floor = 8 if goal == "mass" else 12
+    top = max(top, floor)
+    return [max(floor, top - index) for index in range(max(1, sets))]
+
+
+def sets_phrase(sets: int, reps: str, goal: str = "mass") -> str:
+    """«4 подхода: 10 · 9 · 8 · 8» — видно, что нагрузка падает по подходам."""
     if sets % 100 in (11, 12, 13, 14):
         word = "подходов"
     elif sets % 10 == 1:
@@ -62,7 +79,9 @@ def sets_phrase(sets: int, reps: str) -> str:
         word = "подхода"
     else:
         word = "подходов"
-    return f"{sets} {word} по {reps} повторений"
+
+    scheme = rep_scheme(goal, sets, _top_reps(reps))
+    return f"{sets} {word}: " + " · ".join(str(value) for value in scheme)
 
 SPLITS = {
     2: [("Всё тело, день A", ["Ноги", "Грудь", "Спина", "Пресс"]),
@@ -294,7 +313,7 @@ def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
                 mark = ""
             lines.append(
                 f"{n}. {mark}{slot.exercise.name_ru} — "
-                f"{sets_phrase(sets_text, reps_text)}{suffix}"
+                f"{sets_phrase(sets_text, reps_text, profile.goal)}{suffix}"
             )
         lines.append("")
     lines.append(f"<i>{plan.note}</i>")
