@@ -722,7 +722,8 @@ function renderProgressTab(data) {
               + '</div>'
               + (item.exercises || []).map(ex =>
                   '<div class="muted" style="padding-left:14px">' + esc(ex.name) + ' — '
-                  + ex.sets + '×' + ex.reps + (ex.weight ? ' · ' + ex.weight + ' кг' : '') + '</div>'
+                  + esc(ex.scheme || (ex.sets + '×' + ex.reps))
+                  + (ex.weight_text ? ' · ' + esc(ex.weight_text) : '') + '</div>'
                 ).join('')).join('');
             return '<details><summary class="muted">Неделя ' + week.week + ': ✅ ' + week.done
               + (week.partial ? ' · 🟡 ' + week.partial : '')

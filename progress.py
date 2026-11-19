@@ -538,11 +538,11 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
             (x for x in item.setdefault("exercises", []) if x["name"] == name), None
         )
         if entry is None:
-            entry = {"name": name, "sets": 0, "reps": 0, "weight": 0.0}
+            entry = {"name": name, "sets": 0, "reps": [], "weights": []}
             item["exercises"].append(entry)
         entry["sets"] += 1
-        entry["reps"] = max(entry["reps"], int(row["reps"] or 0))
-        entry["weight"] = max(entry["weight"], float(row["weight"] or 0))
+        entry["reps"].append(int(row["reps"] or 0))
+        entry["weights"].append(float(row["weight"] or 0))
         item["sets_total"] = item.get("sets_total", 0) + 1
 
     for row in tonnage_rows:
@@ -572,6 +572,27 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
         item = bucket(date, int(row["day_index"]))
         reasons = item["reasons"].setdefault(group, {})
         reasons[row["reason"]] = reasons.get(row["reason"], 0) + 1
+
+    for item in days.values():
+        for entry in item.get("exercises", []):
+            reps = entry.pop("reps", [])
+            weights = entry.pop("weights", [])
+            entry["reps"] = reps[0] if reps else 0
+            entry["weight"] = max(weights) if weights else 0.0
+            if reps and len(set(reps)) == 1:
+                entry["scheme"] = f"{len(reps)}×{reps[0]}"
+            elif reps:
+                entry["scheme"] = f"{len(reps)} подх.: " + ", ".join(str(r) for r in reps)
+            else:
+                entry["scheme"] = ""
+
+            positive = [w for w in weights if w > 0]
+            if positive and len(set(positive)) == 1:
+                entry["weight_text"] = f"{positive[0]:g} кг"
+            elif positive:
+                entry["weight_text"] = f"{min(positive):g}–{max(positive):g} кг"
+            else:
+                entry["weight_text"] = ""
 
     anchor = _anchor_sync(user_id)
     for item in days.values():
