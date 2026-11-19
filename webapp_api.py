@@ -218,6 +218,7 @@ async def api_overview(request: web.Request) -> web.Response:
             "equipment": profile.equipment, "activity": profile.activity,
             "sex": profile.sex, "age": profile.age,
             "limitations": sorted(profile.limits),
+            "weight_reminder": bool(profile.weight_reminder),
         }
         payload["reminders"] = {"days": profile.weekdays, "time": profile.workout_time}
         payload["weight_reminder"] = bool(profile.weight_reminder)
@@ -611,6 +612,9 @@ async def api_profile_save(request: web.Request) -> web.Response:
         workout_time=existing.workout_time if existing else "",
         last_reminder=existing.last_reminder if existing else "",
         day_cursor=0,
+        weight_reminder=bool(
+            data.get("weight_reminder", existing.weight_reminder if existing else False)
+        ),
     )
     await profiles.save(profile)
     return web.json_response({"ok": True})

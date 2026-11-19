@@ -133,6 +133,8 @@ function profileFormCard(data, opts) {
     + '<label class="field" style="flex:1">Вес, кг<input id="pf-weight" class="select" type="number" min="30" max="250" value="' + (raw.weight || 70) + '"></label>'
     + '</div>'
     + '<div class="muted" style="margin-top:8px">Ограничения:</div><div class="chips">' + limitBoxes + '</div>'
+    + '<label class="chk" style="margin-top:8px"><input type="checkbox" id="pf-reminder"'
+    + (raw.weight_reminder ? ' checked' : '') + '> Напоминать о взвешивании раз в две недели</label>'
     + '<button class="primary" id="profile-save" style="margin-top:10px">' + saveLabel + '</button>'
     + '</details></div>';
 }
@@ -175,6 +177,8 @@ async function saveProfile() {
         activity: value("pf-act"), sex: value("pf-sex"), age: Number(value("pf-age")),
         height: Number(value("pf-height")), weight: Number(value("pf-weight")),
         limitations: limits,
+        weight_reminder: Boolean(document.getElementById("pf-reminder") &&
+                                  document.getElementById("pf-reminder").checked),
       }),
     });
     try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ }
@@ -664,6 +668,9 @@ function renderProgressTab(data) {
     + '<details class="card" open><summary><b>📈 График тренировок</b></summary>'
     + trainCharts
     + barChart('Тренировок за неделю', workoutsBars, 'workouts', 'шт')
+    + '<details style="margin-top:8px"><summary class="muted">📦 Тоннаж за неделю (кг × повторения)</summary>'
+    + barChart('Объём за неделю', tonnage, 'tonnage', 'кг')
+    + '</details>'
     + (weekly.some(w => w.estimated)
         ? '<div class="muted">* часть подходов восстановлена по плану.</div>'
         : '')
