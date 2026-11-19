@@ -541,6 +541,7 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
             entry = {"name": name, "sets": 0, "reps": [], "weights": []}
             item["exercises"].append(entry)
         entry["sets"] += 1
+        entry["timed"] = bool(getattr(exercise, "timed", False)) if exercise else False
         entry["reps"].append(int(row["reps"] or 0))
         entry["weights"].append(float(row["weight"] or 0))
         item["sets_total"] = item.get("sets_total", 0) + 1
@@ -579,10 +580,11 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
             weights = entry.pop("weights", [])
             entry["reps"] = reps[0] if reps else 0
             entry["weight"] = max(weights) if weights else 0.0
+            suffix = " сек" if entry.get("timed") else ""
             if reps and len(set(reps)) == 1:
-                entry["scheme"] = f"{len(reps)}×{reps[0]}"
+                entry["scheme"] = f"{len(reps)}×{reps[0]}{suffix}"
             elif reps:
-                entry["scheme"] = f"{len(reps)} подх.: " + ", ".join(str(r) for r in reps)
+                entry["scheme"] = f"{len(reps)} подх.: " + ", ".join(str(r) for r in reps) + suffix
             else:
                 entry["scheme"] = ""
 

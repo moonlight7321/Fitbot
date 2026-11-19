@@ -303,6 +303,8 @@ async def api_overview(request: web.Request) -> web.Response:
                             {"slug": s.exercise.slug, "name": s.exercise.name_ru,
                              "sets": _adjusted_sets(s, week["deload"], pain),
                              "reps": (weights.get(s.exercise.slug) or {}).get("reps") or s.reps,
+                             "timed": s.exercise.timed,
+                             "unit": "сек" if s.exercise.timed else "раз",
                              "weight": (weights.get(s.exercise.slug) or {}).get("label"),
                              "weight_value": weights.get(s.exercise.slug, {}).get("value", 0)}
                             for s in day.slots
@@ -470,7 +472,8 @@ async def api_workout_custom(request: web.Request) -> web.Response:
             await progress.add_replacement(user_id, day_index, original, slug)
         try:
             sets = max(1, min(10, int(item.get("sets", 3))))
-            reps = max(1, min(50, int(item.get("reps", 10))))
+            limit = 600 if exercise.timed else 50
+            reps = max(1, min(limit, int(item.get("reps", 10))))
             weight = max(0.0, float(item.get("weight", 0)))
         except (TypeError, ValueError):
             continue
@@ -478,7 +481,7 @@ async def api_workout_custom(request: web.Request) -> web.Response:
         reps_list = item.get("repsList")
         if isinstance(reps_list, list) and reps_list:
             try:
-                values = [max(1, min(50, int(value))) for value in reps_list[:10]]
+                values = [max(1, min(limit, int(value))) for value in reps_list[:10]]
             except (TypeError, ValueError):
                 values = [reps] * sets
             if len(values) < sets:

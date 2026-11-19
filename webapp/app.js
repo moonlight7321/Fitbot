@@ -250,7 +250,12 @@ function renderPlan(data) {
     + '<div class="card"><p class="muted">' + esc(data.plan.note) + '</p></div>';
 }
 
-function repScheme(reps, sets) {
+function repScheme(reps, sets, timed) {
+  if (timed) {
+    const result = [];
+    for (let i = 0; i < sets; i += 1) result.push(Math.max(20, 45 - i * 5));
+    return result;
+  }
   const numbers = (String(reps).match(/\d+/g) || ["10"]).map(Number);
   const top = Math.max.apply(null, numbers);
   const floor = Math.max(1, top - 2);
@@ -278,11 +283,13 @@ function renderEditor(data) {
   } else {
     items = day.slots.map(slot => {
       const sets = slot.sets;
-      const repsList = repScheme(slot.reps, sets);
+      const repsList = repScheme(slot.reps, sets, slot.timed);
       return {
         slug: slot.slug,
         original: slot.slug,
         name: slot.name,
+        timed: Boolean(slot.timed),
+        unit: slot.unit || "раз",
         sets: sets,
         repsList: repsList,
         reps: repsList[0],
@@ -301,9 +308,11 @@ function renderEditor(data) {
     + '<span class="set-reps">'
     + item.repsList.map((value, n) =>
         '<input class="select ed-num" type="number" min="1" max="100" step="1" '
-        + 'data-ed-reps="' + i + '" data-set="' + n + '" value="' + value + '" '
-        + 'title="подход ' + (n + 1) + ', повторений">').join('')
+        + 'data-ed-reps="' + i + '" data-set="' + n + '" value="' + value + '" max="'
+        + (item.timed ? 600 : 100) + '" '
+        + 'title="подход ' + (n + 1) + (item.timed ? ', секунд' : ', повторений') + '">').join('')
     + '</span>'
+    + (item.timed ? '<span class="muted">сек</span>' : '')
     + '<input class="select ed-num ed-weight" type="number" min="0" max="300" step="0.5" data-ed-weight="' + i + '" value="' + item.weight + '" title="вес, кг">'
     + '<span class="muted">кг</span>'
     + '</div>').join('');

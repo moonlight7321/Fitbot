@@ -58,18 +58,24 @@ def _top_reps(reps: str) -> int:
     return max(digits) if digits else 10
 
 
-def rep_scheme(goal: str, sets: int, top: int) -> List[int]:
+def rep_scheme(goal: str, sets: int, top: int, timed: bool = False) -> List[int]:
     """Повторения по подходам с учётом усталости: 10, 9, 8, 8.
 
-    К последним подходам человек объективно делает меньше — план это учитывает,
-    а не требует одинаковых цифр во всех подходах.
+    Для удержаний (планка, боковая планка, «супермен») считаем секунды:
+    45, 40, 35, 35 — иначе 10–15 «повторений» в планке бессмысленны.
     """
+    if timed:
+        # В плане для удержаний стоит диапазон повторений — он не про секунды.
+        # Берём 45 секунд, но если в истории уже больше, стартуем от неё.
+        start = top if top >= 30 else 45
+        return [max(20, start - index * 5) for index in range(max(1, sets))]
+
     floor = 8 if goal == "mass" else 12
     top = max(top, floor)
     return [max(floor, top - index) for index in range(max(1, sets))]
 
 
-def sets_phrase(sets: int, reps: str, goal: str = "mass") -> str:
+def sets_phrase(sets: int, reps: str, goal: str = "mass", timed: bool = False) -> str:
     """«4 подхода: 10 · 9 · 8 · 8» — видно, что нагрузка падает по подходам."""
     if sets % 100 in (11, 12, 13, 14):
         word = "подходов"
@@ -80,8 +86,9 @@ def sets_phrase(sets: int, reps: str, goal: str = "mass") -> str:
     else:
         word = "подходов"
 
-    scheme = rep_scheme(goal, sets, _top_reps(reps))
-    return f"{sets} {word}: " + " · ".join(str(value) for value in scheme)
+    scheme = rep_scheme(goal, sets, _top_reps(reps), timed)
+    unit = " сек" if timed else ""
+    return f"{sets} {word}: " + " · ".join(str(value) for value in scheme) + unit
 
 SPLITS = {
     2: [("Всё тело, день A", ["Ноги", "Грудь", "Спина", "Пресс"]),
@@ -313,7 +320,7 @@ def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
                 mark = ""
             lines.append(
                 f"{n}. {mark}{slot.exercise.name_ru} — "
-                f"{sets_phrase(sets_text, reps_text, profile.goal)}{suffix}"
+                f"{sets_phrase(sets_text, reps_text, profile.goal, slot.exercise.timed)}{suffix}"
             )
         lines.append("")
     lines.append(f"<i>{plan.note}</i>")
