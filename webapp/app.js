@@ -483,7 +483,7 @@ function sparkline(series) {
 function renderProgress(data) {
   const progress = data.progress;
   if (!progress) return '';
-  const items = progress.items.map(item => {
+  const items = (progress.items || []).map(item => {
     if (item.first <= 0) {
       return '<li>' + esc(item.name) + ': свой вес, последний раз '
         + esc(item.last_date.slice(8, 10) + '.' + item.last_date.slice(5, 7)) + '</li>';

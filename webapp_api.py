@@ -38,7 +38,7 @@ WEBAPP_DIR = BASE_DIR / "webapp"
 MAX_AUTH_AGE = 24 * 60 * 60  # initData живёт сутки
 
 # Ограничение частоты: (сколько запросов, за сколько секунд)
-RATE_WRITE = (12, 60)
+RATE_WRITE = (30, 60)
 RATE_READ = (90, 60)
 _RATE_BUCKETS: dict = defaultdict(deque)
 RATE_CLEANUP_EVERY = 500
@@ -71,6 +71,15 @@ def _check_rate(request: web.Request, kind: str) -> bool:
 
 
 @web.middleware
+async def safe_errors(request: web.Request, handler):
+    """Битый JSON от клиента — это 400, а не внутренняя ошибка 500."""
+    try:
+        return await handler(request)
+    except json.JSONDecodeError:
+        return web.json_response({"error": "bad json"}, status=400)
+
+
+@web.middleware
 async def no_cache(request: web.Request, handler):
     """Статика мини-аппа не кешируется: иначе Telegram держит старый JS."""
     response = await handler(request)
@@ -83,7 +92,7 @@ async def no_cache(request: web.Request, handler):
 
 @web.middleware
 async def rate_limit(request: web.Request, handler):
-    """Простой лимит в памяти: 12 записей и 90 чтений в минуту на пользователя."""
+    """Простой лимит в памяти: 30 записей и 90 чтений в минуту на пользователя."""
     if request.path.startswith(("/static/", "/media/")) or request.path == "/":
         return await handler(request)
 
@@ -1049,7 +1058,7 @@ async def index(request: web.Request) -> web.StreamResponse:
 
 def create_app(settings: Settings) -> web.Application:
     # telegram_auth первым: лимит считается по пользователю из подписи
-    app = web.Application(middlewares=[telegram_auth, rate_limit, no_cache])
+    app = web.Application(middlewares=[safe_errors, telegram_auth, rate_limit, no_cache])
     app["bot_token"] = settings.telegram_token
     app.router.add_get("/", index)
     app.router.add_static("/static/", WEBAPP_DIR, show_index=False)
