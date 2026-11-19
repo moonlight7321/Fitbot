@@ -5,6 +5,8 @@ window.addEventListener("error", event => {
   try { toast("Ошибка: " + (event.message || "неизвестная")); } catch (e) { /* ignore */ }
 });
 
+let altScrollY = null;  // куда вернуть экран после закрытия блока замен
+
 const state = { overview: null, exercises: null, tab: "plan", period: 30 };
 
 function headers() {
@@ -921,6 +923,7 @@ function render() {
         btn.classList.add("active");
 
         const box = document.getElementById("ed-alt");
+        altScrollY = window.scrollY || 0;
         box.classList.remove("hidden");
         box.innerHTML = '<div class="muted">Загружаю замены…</div>';
         box.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -938,6 +941,10 @@ function render() {
             document.querySelectorAll("[data-ed-name]").forEach(other => other.classList.remove("active"));
             box.classList.add("hidden");
             box.innerHTML = "";
+            if (altScrollY !== null) {
+              window.scrollTo({ top: altScrollY, behavior: "smooth" });
+              altScrollY = null;
+            }
           };
           box.querySelectorAll("[data-alt]").forEach(altBtn => {
             altBtn.onclick = () => {
@@ -956,6 +963,10 @@ function render() {
           btn.classList.remove("active");
           box.innerHTML = '<div class="muted">Не удалось получить замены. Попробуйте ещё раз.</div>';
           toast("Не удалось получить замены");
+          if (altScrollY !== null) {
+            window.scrollTo({ top: altScrollY, behavior: "smooth" });
+            altScrollY = null;
+          }
         }
       };
     });
