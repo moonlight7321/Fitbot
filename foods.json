@@ -161,13 +161,6 @@
     "carbs": 12
   },
   {
-    "name": "Ягоды",
-    "kcal": 40,
-    "protein": 0.7,
-    "fat": 0.3,
-    "carbs": 9
-  },
-  {
     "name": "Авокадо",
     "kcal": 160,
     "protein": 2,
@@ -334,13 +327,6 @@
     "protein": 12,
     "fat": 10,
     "carbs": 20
-  },
-  {
-    "name": "Сахар",
-    "kcal": 400,
-    "protein": 0,
-    "fat": 0,
-    "carbs": 100
   },
   {
     "name": "Мёд",
