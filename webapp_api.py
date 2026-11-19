@@ -397,11 +397,15 @@ async def api_alternatives(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
 
     excluded = planner.excluded_slugs(profile.limits)
-    items = [
-        {"slug": ex.slug, "name": ex.name_ru}
-        for ex in exercises.by_group(current.group)
-        if ex.slug != slug and planner._allowed(ex, profile.experience, profile.equipment, excluded)
-    ][:8]
+    candidates = [
+        ex for ex in exercises.by_group(current.group)
+        if ex.slug != slug
+        # Уровень не фильтруем: подтягивания — та же спина, даже если они сложнее.
+        # Проверяем только инвентарь и ограничения.
+        and planner._allowed(ex, "advanced", profile.equipment, excluded)
+    ]
+    candidates.sort(key=lambda ex: (ex.equipment != current.equipment, ex.level != current.level))
+    items = [{"slug": ex.slug, "name": ex.name_ru} for ex in candidates][:8]
     return web.json_response({"items": items})
 
 

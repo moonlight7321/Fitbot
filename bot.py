@@ -2429,8 +2429,12 @@ async def ed_exchange(callback: CallbackQuery, state: FSMContext) -> None:
     excluded = planner.excluded_slugs(profile.limits)
     alternatives = [
         ex for ex in exercises.by_group(current.group)
-        if ex.slug != slug and planner._allowed(ex, profile.experience, profile.equipment, excluded)
-    ][:6]
+        if ex.slug != slug
+        # Уровень не фильтруем: подтягивания — та же спина, даже если сложнее
+        and planner._allowed(ex, "advanced", profile.equipment, excluded)
+    ]
+    alternatives.sort(key=lambda ex: (ex.equipment != current.equipment, ex.level != current.level))
+    alternatives = alternatives[:6]
 
     rows = [
         [InlineKeyboardButton(text=ex.name_ru[:30], callback_data=f"ed:chg:{slug}:{ex.slug}")]
