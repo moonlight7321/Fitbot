@@ -917,10 +917,16 @@ function render() {
     document.querySelectorAll("[data-ed-name]").forEach(btn => {
       btn.onclick = async () => {
         const i = Number(btn.dataset.edName);
+        document.querySelectorAll("[data-ed-name]").forEach(other => other.classList.remove("active"));
+        btn.classList.add("active");
+
+        const box = document.getElementById("ed-alt");
+        box.classList.remove("hidden");
+        box.innerHTML = '<div class="muted">Загружаю замены…</div>';
+        box.scrollIntoView({ behavior: "smooth", block: "center" });
+
         try {
           const res = await api("/api/alternatives/" + encodeURIComponent(ed.items[i].slug));
-          const box = document.getElementById("ed-alt");
-          box.classList.remove("hidden");
           box.innerHTML = '<div class="muted">Заменить «' + esc(ed.items[i].name) + '»:</div>'
             + res.items.map(item => '<button class="ex" data-alt="' + esc(item.slug)
                 + '" data-i="' + i + '">' + esc(item.name) + '</button>').join('');
@@ -933,10 +939,15 @@ function render() {
               const weightInput = document.querySelector('[data-ed-weight="' + i + '"]');
               if (weightInput) weightInput.value = 0;
               btn.textContent = item.name;
+              btn.classList.remove("active");
               box.classList.add("hidden");
             };
           });
-        } catch (e) { toast("Не удалось получить замены"); }
+        } catch (e) {
+          btn.classList.remove("active");
+          box.innerHTML = '<div class="muted">Не удалось получить замены. Попробуйте ещё раз.</div>';
+          toast("Не удалось получить замены");
+        }
       };
     });
     const saveEd = document.getElementById("ed-save");
