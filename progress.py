@@ -850,6 +850,35 @@ def _weekly_volume_sync(user_id: int, weeks: int) -> list:
     return result
 
 
+def _recent_workout_sync(user_id: int, day_index: int, seconds: int) -> bool:
+    """Была ли тренировка этого дня записана только что — защита от двойного тапа."""
+    conn = _open()
+    try:
+        row = conn.execute(
+            "SELECT created_at FROM workouts WHERE user_id = ? AND day_index = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (user_id, day_index),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or not row["created_at"]:
+        return False
+    try:
+        moment = datetime.strptime(row["created_at"], "%Y-%m-%dT%H:%M:%S")
+    except (TypeError, ValueError):
+        try:
+            moment = datetime.fromisoformat(row["created_at"])
+        except (TypeError, ValueError):
+            return False
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(TIMEZONE).replace(tzinfo=None)
+    return (datetime.now(TIMEZONE).replace(tzinfo=None) - moment).total_seconds() < seconds
+
+
+async def recent_workout(user_id: int, day_index: int, seconds: int = 10) -> bool:
+    return await asyncio.to_thread(_recent_workout_sync, user_id, day_index, seconds)
+
+
 def _count_sync(user_id: int) -> int:
     conn = _open()
     try:

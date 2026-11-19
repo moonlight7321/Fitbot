@@ -1,8 +1,29 @@
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
 
+function reportError(message, source, line) {
+  try {
+    fetch("/api/error", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        message: String(message || "").slice(0, 300),
+        source: String(source || "").slice(0, 200),
+        line: Number(line) || 0,
+        build: state.build || "",
+        ua: String(navigator.userAgent || "").slice(0, 200),
+      }),
+    }).catch(() => {});
+  } catch (e) { /* ignore */ }
+}
+
 window.addEventListener("error", event => {
+  reportError(event.message, event.filename, event.lineno);
   try { toast("Ошибка: " + (event.message || "неизвестная")); } catch (e) { /* ignore */ }
+});
+
+window.addEventListener("unhandledrejection", event => {
+  reportError(String(event.reason), "promise", 0);
 });
 
 let altScrollY = null;  // куда вернуть экран после закрытия блока замен
@@ -16,17 +37,31 @@ function headers() {
   };
 }
 
+const _inflight = new Map();
+
 async function api(path, options = {}) {
-  const response = await fetch(path, { headers: headers(), ...options });
-  if (!response.ok) {
+  // Двойной тап по «Сохранить» не должен записывать тренировку дважды
+  const key = options.method === "POST" ? path + "|" + (options.body || "") : null;
+  if (key && _inflight.has(key)) return _inflight.get(key);
+
+  const request = (async () => {
+    const response = await fetch(path, { headers: headers(), ...options });
+    if (!response.ok) {
     let message = "HTTP " + response.status;
     try {
       const data = await response.json();
       if (data && (data.message || data.error)) message = data.message || data.error;
     } catch (e) { /* тело не JSON */ }
-    throw new Error(message);
+      throw new Error(message);
+    }
+    return response.json();
+  })();
+
+  if (key) {
+    _inflight.set(key, request);
+    request.finally(() => _inflight.delete(key));
   }
-  return response.json();
+  return request;
 }
 
 function toast(text) {
@@ -811,7 +846,17 @@ function render() {
   if (!data) { view.innerHTML = '<div class="card"><p class="muted">Загрузка…</p></div>'; return; }
 
   const buildEl = document.getElementById("build");
-  if (buildEl && data.build) buildEl.textContent = "v" + data.build;
+  if (buildEl && data.build) {
+    buildEl.textContent = "v" + data.build;
+    if (state.build && state.build !== data.build) {
+      buildEl.textContent += " ⚠";
+      buildEl.title = "Вышло обновление — нажмите, чтобы перезагрузить";
+      buildEl.style.cursor = "pointer";
+      buildEl.onclick = () => location.reload();
+      toast("Вышло обновление приложения");
+    }
+  }
+  if (!state.build && data.build) state.build = data.build;
 
   // Пока анкеты нет — показываем только её, без остальных вкладок
   if (!data.profile_raw) {

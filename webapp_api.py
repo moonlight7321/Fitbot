@@ -20,7 +20,7 @@ from collections import defaultdict, deque
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from aiohttp import web
+from aiohttp import ClientSession, web
 
 import calories
 import diary
@@ -461,6 +461,12 @@ async def api_workout_custom(request: web.Request) -> web.Response:
     if day_index < 0 or day_index >= len(plan.days):
         return web.json_response({"error": "bad day"}, status=400)
 
+    if await progress.recent_workout(user_id, day_index, 10):
+        return web.json_response(
+            {"error": "duplicate", "message": "Эта тренировка уже записана"},
+            status=409,
+        )
+
     records = []
     for item in items:
         slug = str(item.get("slug", ""))
@@ -526,6 +532,43 @@ async def api_workout_custom(request: web.Request) -> web.Response:
     profile = dataclasses.replace(profile, day_cursor=(day_index + 1) % len(plan.days))
     await profiles.save(profile)
     return web.json_response({"ok": True, "records": len(records)})
+
+
+_ERROR_SEEN: dict = {}
+
+
+async def api_error(request: web.Request) -> web.Response:
+    """Клиентские JS-ошибки — владельцу в бота, не чаще раза в минуту с человека."""
+    user = request.get("tg_user") or {}
+    user_id = int(user.get("id", 0))
+    now = time.monotonic()
+    if now - _ERROR_SEEN.get(user_id, 0) < 60:
+        return web.json_response({"ok": True})
+    _ERROR_SEEN[user_id] = now
+
+    data = await request.json()
+    text = (
+        "⚠️ Ошибка в мини-аппе\n"
+        f"Пользователь: {user_id}\n"
+        f"Сборка: {str(data.get('build', '?'))[:40]}\n"
+        f"Сообщение: {str(data.get('message', ''))[:300]}\n"
+        f"Где: {str(data.get('source', ''))[:200]}:{data.get('line', 0)}\n"
+        f"UA: {str(data.get('ua', ''))[:200]}"
+    )
+
+    token = request.app.get("bot_token")
+    owners = request.app.get("owner_ids") or []
+    if token and owners:
+        try:
+            async with ClientSession() as session:
+                for owner in owners:
+                    await session.post(
+                        f"https://api.telegram.org/bot{token}/sendMessage",
+                        json={"chat_id": owner, "text": text[:3900]},
+                    )
+        except Exception:  # noqa: BLE001 — сеть не должна ломать ответ клиенту
+            logger.warning("Не удалось отправить JS-ошибку владельцу")
+    return web.json_response({"ok": True})
 
 
 async def api_weight(request: web.Request) -> web.Response:
@@ -786,6 +829,12 @@ async def api_workout_complete(request: web.Request) -> web.Response:
     plan = planner.build(profile)
     if day_index < 0 or day_index >= len(plan.days):
         return web.json_response({"error": "bad day"}, status=400)
+
+    if await progress.recent_workout(user_id, day_index, 10):
+        return web.json_response(
+            {"error": "duplicate", "message": "Эта тренировка уже записана"},
+            status=409,
+        )
 
     day = plan.days[day_index]
     week = await progress.week_state(user_id, len(plan.days))
@@ -1060,6 +1109,7 @@ def create_app(settings: Settings) -> web.Application:
     # telegram_auth первым: лимит считается по пользователю из подписи
     app = web.Application(middlewares=[safe_errors, telegram_auth, rate_limit, no_cache])
     app["bot_token"] = settings.telegram_token
+    app["owner_ids"] = list(settings.owner_ids)
     app.router.add_get("/", index)
     app.router.add_static("/static/", WEBAPP_DIR, show_index=False)
     # ВАЖНО: корень media, а не media/exercises — иначе /media/exercises/<slug>/0.jpg
@@ -1076,6 +1126,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_post("/api/trial", api_trial)
     app.router.add_post("/api/weight", api_weight)
     app.router.add_post("/api/weight-reminder", api_weight_reminder)
+    app.router.add_post("/api/error", api_error)
     app.router.add_post("/api/reminders", api_reminders)
     app.router.add_get("/api/alternatives/{slug}", api_alternatives)
     app.router.add_post("/api/workouts/custom", api_workout_custom)
