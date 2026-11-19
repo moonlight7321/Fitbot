@@ -476,6 +476,18 @@ async def api_workout_custom(request: web.Request) -> web.Response:
         except (TypeError, ValueError):
             continue
 
+        reps_list = item.get("repsList")
+        if isinstance(reps_list, list) and reps_list:
+            try:
+                values = [max(1, min(50, int(value))) for value in reps_list[:10]]
+            except (TypeError, ValueError):
+                values = [reps] * sets
+            if len(values) < sets:
+                values += [values[-1]] * (sets - len(values))
+            sets = len(values)
+        else:
+            values = [reps] * sets
+
         # Если вес не указан для снаряда, подставляем стартовый ориентир:
         # иначе ноль в журнале будет читаться как «свой вес» и прогрессия сломается
         if weight <= 0 and "свой вес" not in (exercise.equipment or "").lower():
@@ -488,8 +500,8 @@ async def api_workout_custom(request: web.Request) -> web.Response:
                  "message": f"{exercise.name_ru}: максимум {cap:g} кг"},
                 status=400,
             )
-        for _ in range(sets):
-            records.append(progress.SetRecord(slug, weight, reps))
+        for value in values:
+            records.append(progress.SetRecord(slug, weight, value))
 
     if not records:
         return web.json_response({"error": "nothing to save"}, status=400)

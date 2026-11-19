@@ -626,11 +626,14 @@ def _last_day_sets_sync(user_id: int, day_index: int) -> dict:
     result: dict = {}
     for item in rows:
         bucket = result.setdefault(
-            item["slug"], {"sets": 0, "reps": int(item["reps"]), "weight": float(item["weight"])}
+            item["slug"],
+            {"sets": 0, "reps": int(item["reps"]), "weight": float(item["weight"]),
+             "reps_list": []},
         )
         bucket["sets"] += 1
         bucket["reps"] = int(item["reps"])
         bucket["weight"] = float(item["weight"])
+        bucket["reps_list"].append(int(item["reps"]))
     return result
 
 

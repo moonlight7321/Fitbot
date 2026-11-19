@@ -81,6 +81,8 @@ details.bar-wrap > summary.bar-row::-webkit-details-marker { display: none; }
 .bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 6px; }
 .bar-value { text-align: right; color: var(--muted); }
 .bar-label { color: var(--muted); }
+.set-reps { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.set-reps input { width: 52px; text-align: center; }
 .food-list { display: flex; flex-wrap: wrap; gap: 4px; max-height: 220px; overflow-y: auto; }
 .food-item { font-size: 12px; padding: 6px 8px; }
 .select, .textarea {

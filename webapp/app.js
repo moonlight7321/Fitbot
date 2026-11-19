@@ -250,6 +250,15 @@ function renderPlan(data) {
     + '<div class="card"><p class="muted">' + esc(data.plan.note) + '</p></div>';
 }
 
+function repScheme(reps, sets) {
+  const numbers = (String(reps).match(/\d+/g) || ["10"]).map(Number);
+  const top = Math.max.apply(null, numbers);
+  const floor = Math.max(1, top - 2);
+  const result = [];
+  for (let i = 0; i < sets; i += 1) result.push(Math.max(floor, top - i));
+  return result;
+}
+
 function repsFromRange(reps) {
   const text = String(reps || "10").replace(/[^0-9–-]/g, "");
   const parts = text.split(/[–-]/);
@@ -263,12 +272,18 @@ function renderEditor(data) {
   const prefill = data.editor_prefill || {};
   const items = day.slots.map(slot => {
     const last = prefill[slot.slug] || {};
+    const sets = last.sets || slot.sets;
+    const repsList = (last.reps_list && last.reps_list.length)
+      ? last.reps_list.slice(0, sets)
+      : repScheme(slot.reps, sets);
+    while (repsList.length < sets) repsList.push(repsList[repsList.length - 1] || 10);
     return {
       slug: slot.slug,
       original: slot.slug,
       name: slot.name,
-      sets: last.sets || slot.sets,
-      reps: last.reps || repsFromRange(slot.reps),
+      sets: sets,
+      repsList: repsList,
+      reps: repsList[0],
       weight: last.weight !== undefined ? last.weight : (slot.weight_value || 0),
     };
   });
@@ -280,9 +295,12 @@ function renderEditor(data) {
     + '<select class="select ed-num" data-ed-sets="' + i + '">'
     + [1, 2, 3, 4, 5, 6].map(n => '<option value="' + n + '"' + (n === item.sets ? ' selected' : '') + '>' + n + ' подх.</option>').join('')
     + '</select>'
-    + '<select class="select ed-num" data-ed-reps="' + i + '">'
-    + [6, 8, 10, 12, 15, 20].map(n => '<option value="' + n + '"' + (n === item.reps ? ' selected' : '') + '>' + n + ' раз</option>').join('')
-    + '</select>'
+    + '<span class="set-reps">'
+    + item.repsList.map((value, n) =>
+        '<input class="select ed-num" type="number" min="1" max="100" step="1" '
+        + 'data-ed-reps="' + i + '" data-set="' + n + '" value="' + value + '" '
+        + 'title="подход ' + (n + 1) + ', повторений">').join('')
+    + '</span>'
     + '<input class="select ed-num ed-weight" type="number" min="0" max="300" step="0.5" data-ed-weight="' + i + '" value="' + item.weight + '" title="вес, кг">'
     + '<span class="muted">кг</span>'
     + '</div>').join('');
@@ -835,10 +853,25 @@ function render() {
   if (state.tab === "plan" && state.editor) {
     const ed = state.editor;
     document.querySelectorAll("[data-ed-sets]").forEach(sel => {
-      sel.onchange = () => { ed.items[Number(sel.dataset.edSets)].sets = Number(sel.value); };
+      sel.onchange = () => {
+        const item = ed.items[Number(sel.dataset.edSets)];
+        const sets = Number(sel.value);
+        item.sets = sets;
+        while (item.repsList.length < sets) {
+          item.repsList.push(item.repsList[item.repsList.length - 1] || 10);
+        }
+        item.repsList = item.repsList.slice(0, sets);
+        item.reps = item.repsList[0];
+        render();
+      };
     });
-    document.querySelectorAll("[data-ed-reps]").forEach(sel => {
-      sel.onchange = () => { ed.items[Number(sel.dataset.edReps)].reps = Number(sel.value); };
+    document.querySelectorAll("[data-ed-reps]").forEach(input => {
+      input.onchange = () => {
+        const item = ed.items[Number(input.dataset.edReps)];
+        const index = Number(input.dataset.set);
+        item.repsList[index] = Number(input.value) || 1;
+        item.reps = item.repsList[0];
+      };
     });
     document.querySelectorAll("[data-ed-weight]").forEach(input => {
       input.onchange = () => { ed.items[Number(input.dataset.edWeight)].weight = Number(input.value) || 0; };
