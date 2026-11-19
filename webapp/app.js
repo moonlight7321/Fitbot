@@ -927,9 +927,18 @@ function render() {
 
         try {
           const res = await api("/api/alternatives/" + encodeURIComponent(ed.items[i].slug));
-          box.innerHTML = '<div class="muted">Заменить «' + esc(ed.items[i].name) + '»:</div>'
+          box.innerHTML = '<div class="input-row" style="justify-content:space-between">'
+            + '<div class="muted">Заменить «' + esc(ed.items[i].name) + '»:</div>'
+            + '<button class="ghost" id="ed-alt-cancel">Отмена</button></div>'
             + res.items.map(item => '<button class="ex" data-alt="' + esc(item.slug)
                 + '" data-i="' + i + '">' + esc(item.name) + '</button>').join('');
+
+          const cancel = document.getElementById("ed-alt-cancel");
+          if (cancel) cancel.onclick = () => {
+            document.querySelectorAll("[data-ed-name]").forEach(other => other.classList.remove("active"));
+            box.classList.add("hidden");
+            box.innerHTML = "";
+          };
           box.querySelectorAll("[data-alt]").forEach(altBtn => {
             altBtn.onclick = () => {
               const item = ed.items[Number(altBtn.dataset.i)];
