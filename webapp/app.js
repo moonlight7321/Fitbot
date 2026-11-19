@@ -430,6 +430,13 @@ function sparkline(series) {
     (padL + i * step).toFixed(1) + ',' + y(p.weight).toFixed(1)
   ).join(' ');
 
+  let baselineLine = '';
+  if (series.baseline) {
+    const baselineY = y(Number(series.baseline)).toFixed(1);
+    baselineLine = '<line x1="' + padL + '" y1="' + baselineY + '" x2="' + (w - padR)
+      + '" y2="' + baselineY + '" stroke="#8a94a6" stroke-width="1.5" stroke-dasharray="3 4" />';
+  }
+
   let trendLine = '';
   if (trend.length > 1) {
     const trendCoords = trend.map((p, i) =>
@@ -463,6 +470,7 @@ function sparkline(series) {
     + grid
     + '<line x1="' + padL + '" y1="' + (h - padB) + '" x2="' + (w - padR) + '" y2="' + (h - padB)
     + '" stroke="#2c343f" stroke-width="1" />'
+    + baselineLine
     + '<polyline points="' + coords + '" fill="none" stroke="#4f8cff" stroke-width="2.5" />'
     + trendLine
     + dots
@@ -711,13 +719,25 @@ function renderProgressTab(data) {
     + '<div class="card"><h2>Вес тела</h2>'
     + '<p class="muted">Взвешивайтесь примерно раз в две недели, утром натощак: '
     + 'так виден тренд, а случайные колебания не мешают.</p>'
-    + ((data.weight_log || []).length
-        ? sparkline({
-            name: 'Вес, кг — точки и тренд за 14 дней',
-            points: data.weight_log.map(w => ({ date: w.date, weight: w.weight })),
-            trend: (data.weight_trend || []).map(w => ({ date: w.date, weight: w.weight })),
-          })
-        : '<p class="muted">Пока нет записей. Добавьте первый вес ниже.</p>')
+    + (() => {
+        const profileWeight = data.profile_raw ? Number(data.profile_raw.weight) : 0;
+        const points = (data.weight_log || []).map(w => ({ date: w.date, weight: w.weight }));
+        if (!points.length && profileWeight) {
+          points.push({ date: new Date().toISOString().slice(0, 10), weight: profileWeight });
+        }
+        if (!points.length) {
+          return '<p class="muted">Заполните вес в анкете — график начнётся с него.</p>';
+        }
+        const chart = sparkline({
+          name: 'Вес, кг — точки и тренд за 14 дней',
+          points: points,
+          trend: (data.weight_trend || []).map(w => ({ date: w.date, weight: w.weight })),
+          baseline: profileWeight || null,
+        });
+        return chart + (profileWeight
+          ? '<div class="muted">Пунктир — стартовый вес из анкеты: ' + profileWeight + ' кг</div>'
+          : '');
+      })()
     + '<div class="input-row" style="margin-top:8px">'
     + '<input id="weight-input" class="select" type="number" min="30" max="250" step="0.1" placeholder="например 78.5">'
     + '<button class="primary" id="weight-save">Записать вес</button>'
