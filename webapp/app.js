@@ -260,14 +260,18 @@ function renderEditor(data) {
   if (!data.plan || !data.plan.days.length) return '';
   const index = (data.next_day === undefined || data.next_day === null) ? 0 : data.next_day;
   const day = data.plan.days[index];
-  const items = day.slots.map(slot => ({
-    slug: slot.slug,
-    original: slot.slug,
-    name: slot.name,
-    sets: slot.sets,
-    reps: repsFromRange(slot.reps),
-    weight: slot.weight_value || 0,
-  }));
+  const prefill = data.editor_prefill || {};
+  const items = day.slots.map(slot => {
+    const last = prefill[slot.slug] || {};
+    return {
+      slug: slot.slug,
+      original: slot.slug,
+      name: slot.name,
+      sets: last.sets || slot.sets,
+      reps: last.reps || repsFromRange(slot.reps),
+      weight: last.weight !== undefined ? last.weight : (slot.weight_value || 0),
+    };
+  });
   state.editor = { dayIndex: index, items: items };
 
   const rows = items.map((item, i) =>
@@ -637,6 +641,7 @@ function renderProgressTab(data) {
   const days = details.map(item =>
     '<div class="muted">' + esc(item.date.slice(8, 10) + '.' + item.date.slice(5, 7))
     + ' · День ' + (item.day_index + 1) + ' · ' + (statusNames[item.status] || '—')
+    + (item.tonnage ? ' · ' + item.tonnage + ' кг' : '')
     + (item.estimated ? ' · оценка: ' + item.estimated + ' подх.' : '')
     + Object.keys(item.reasons || {}).slice(0, 1).map(group =>
         ' · ' + esc(group) + ': ' + Object.keys(item.reasons[group]).length + ' прич.')
@@ -712,6 +717,7 @@ function renderProgressTab(data) {
             const dayLines = weekDays.map(item =>
               '<div class="muted">' + esc(item.date.slice(8, 10) + '.' + item.date.slice(5, 7))
               + ' · День ' + (item.day_index + 1) + ' · ' + (statusNames[item.status] || '—')
+              + (item.tonnage ? ' · ' + item.tonnage + ' кг' : '')
               + ((item.estimated_items || []).length
                   ? ' · оценка: ' + item.estimated_items.map(x => esc(x.name) + ' ' + x.count).join(', ')
                   : '')

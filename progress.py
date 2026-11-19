@@ -478,6 +478,12 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
             "SELECT week, day_index, slug, reason, created_at FROM failures WHERE user_id = ?",
             (user_id,),
         ).fetchall()
+        tonnage_rows = conn.execute(
+            """SELECT w.done_on, w.day_index, SUM(ws.weight * ws.reps) AS total
+               FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
+               WHERE w.user_id = ? GROUP BY w.done_on, w.day_index""",
+            (user_id,),
+        ).fetchall()
         estimated_rows = conn.execute(
             """SELECT w.done_on, w.day_index, ws.slug, SUM(ws.estimated) AS est
                FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
@@ -515,6 +521,12 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
         elif value == 2 and item["status"] != "done":
             item["status"] = "partial"
 
+    for row in tonnage_rows:
+        date = row["done_on"] or ""
+        if date < since:
+            continue
+        bucket(date, int(row["day_index"]))["tonnage"] = round(float(row["total"] or 0))
+
     for row in estimated_rows:
         date = row["done_on"] or ""
         if date < since:
@@ -547,6 +559,38 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
 
     ordered = sorted(days.values(), key=lambda item: (item["date"], item["day_index"]), reverse=True)
     return ordered[offset:offset + limit]
+
+
+def _last_day_sets_sync(user_id: int, day_index: int) -> dict:
+    """Подходы последней тренировки этого дня — чтобы редактор не сбрасывал цифры."""
+    conn = _open()
+    try:
+        row = conn.execute(
+            "SELECT MAX(id) AS wid FROM workouts WHERE user_id = ? AND day_index = ?",
+            (user_id, day_index),
+        ).fetchone()
+        if not row or not row["wid"]:
+            return {}
+        rows = conn.execute(
+            "SELECT slug, weight, reps FROM workout_sets WHERE workout_id = ? ORDER BY set_no",
+            (row["wid"],),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    result: dict = {}
+    for item in rows:
+        bucket = result.setdefault(
+            item["slug"], {"sets": 0, "reps": int(item["reps"]), "weight": float(item["weight"])}
+        )
+        bucket["sets"] += 1
+        bucket["reps"] = int(item["reps"])
+        bucket["weight"] = float(item["weight"])
+    return result
+
+
+async def last_day_sets(user_id: int, day_index: int) -> dict:
+    return await asyncio.to_thread(_last_day_sets_sync, user_id, day_index)
 
 
 async def day_details(user_id: int, limit: int = 10, offset: int = 0) -> list:
