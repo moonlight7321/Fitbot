@@ -987,7 +987,7 @@ function render() {
             box.classList.add("hidden");
             box.innerHTML = "";
             if (altScrollY !== null) {
-              window.scrollTo({ top: altScrollY, behavior: "smooth" });
+              window.scrollTo({ top: altScrollY, behavior: "auto" });
               altScrollY = null;
             }
           };
@@ -1004,7 +1004,7 @@ function render() {
               box.classList.add("hidden");
               box.innerHTML = "";
               if (altScrollY !== null) {
-                window.scrollTo({ top: altScrollY, behavior: "smooth" });
+                window.scrollTo({ top: altScrollY, behavior: "auto" });
                 altScrollY = null;
               }
             };
@@ -1014,7 +1014,7 @@ function render() {
           box.innerHTML = '<div class="muted">Не удалось получить замены. Попробуйте ещё раз.</div>';
           toast("Не удалось получить замены");
           if (altScrollY !== null) {
-            window.scrollTo({ top: altScrollY, behavior: "smooth" });
+            window.scrollTo({ top: altScrollY, behavior: "auto" });
             altScrollY = null;
           }
         }
