@@ -219,6 +219,7 @@ async def api_overview(request: web.Request) -> web.Response:
             "sex": profile.sex, "age": profile.age,
             "limitations": sorted(profile.limits),
             "weight_reminder": bool(profile.weight_reminder),
+            "created_at": (profile.created_at or "")[:10],
         }
         payload["reminders"] = {"days": profile.weekdays, "time": profile.workout_time}
         payload["weight_reminder"] = bool(profile.weight_reminder)

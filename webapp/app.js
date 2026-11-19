@@ -721,9 +721,12 @@ function renderProgressTab(data) {
     + 'так виден тренд, а случайные колебания не мешают.</p>'
     + (() => {
         const profileWeight = data.profile_raw ? Number(data.profile_raw.weight) : 0;
+        const createdAt = data.profile_raw && data.profile_raw.created_at
+          ? String(data.profile_raw.created_at).slice(0, 10)
+          : new Date().toISOString().slice(0, 10);
         const points = (data.weight_log || []).map(w => ({ date: w.date, weight: w.weight }));
-        if (!points.length && profileWeight) {
-          points.push({ date: new Date().toISOString().slice(0, 10), weight: profileWeight });
+        if (profileWeight && (!points.length || points[0].date > createdAt)) {
+          points.unshift({ date: createdAt, weight: profileWeight });
         }
         if (!points.length) {
           return '<p class="muted">Заполните вес в анкете — график начнётся с него.</p>';
