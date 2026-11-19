@@ -269,14 +269,11 @@ function renderEditor(data) {
   if (!data.plan || !data.plan.days.length) return '';
   const index = (data.next_day === undefined || data.next_day === null) ? 0 : data.next_day;
   const day = data.plan.days[index];
-  const prefill = data.editor_prefill || {};
+  // Только плановые значения: прошлые подходы не подставляем, иначе
+  // человек воспринимает их как новый, более лёгкий план.
   const items = day.slots.map(slot => {
-    const last = prefill[slot.slug] || {};
-    const sets = last.sets || slot.sets;
-    const repsList = (last.reps_list && last.reps_list.length)
-      ? last.reps_list.slice(0, sets)
-      : repScheme(slot.reps, sets);
-    while (repsList.length < sets) repsList.push(repsList[repsList.length - 1] || 10);
+    const sets = slot.sets;
+    const repsList = repScheme(slot.reps, sets);
     return {
       slug: slot.slug,
       original: slot.slug,
@@ -284,7 +281,7 @@ function renderEditor(data) {
       sets: sets,
       repsList: repsList,
       reps: repsList[0],
-      weight: last.weight !== undefined ? last.weight : (slot.weight_value || 0),
+      weight: slot.weight_value || 0,
     };
   });
   state.editor = { dayIndex: index, items: items };

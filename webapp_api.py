@@ -293,7 +293,6 @@ async def api_overview(request: web.Request) -> web.Response:
                 payload["next_day"] = profile.day_cursor
             else:
                 payload["next_day"] = await progress.next_day_index(user_id, len(plan.days))
-            payload["editor_prefill"] = await progress.last_day_sets(user_id, payload["next_day"])
             payload["plan"] = {
                 "note": plan.note,
                 "deload": week["deload"],
