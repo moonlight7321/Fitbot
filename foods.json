@@ -175,13 +175,6 @@
     "carbs": 22
   },
   {
-    "name": "Оливковое масло",
-    "kcal": 884,
-    "protein": 0,
-    "fat": 100,
-    "carbs": 0
-  },
-  {
     "name": "Сливочное масло",
     "kcal": 717,
     "protein": 0.9,
@@ -327,13 +320,6 @@
     "protein": 12,
     "fat": 10,
     "carbs": 20
-  },
-  {
-    "name": "Мёд",
-    "kcal": 304,
-    "protein": 0.3,
-    "fat": 0,
-    "carbs": 82
   },
   {
     "name": "Хлеб белый",
@@ -579,27 +565,6 @@
     "protein": 7,
     "fat": 35,
     "carbs": 53
-  },
-  {
-    "name": "Майонез",
-    "kcal": 691,
-    "protein": 1,
-    "fat": 75,
-    "carbs": 3
-  },
-  {
-    "name": "Кетчуп",
-    "kcal": 109,
-    "protein": 1,
-    "fat": 0.1,
-    "carbs": 26
-  },
-  {
-    "name": "Соус соевый",
-    "kcal": 48,
-    "protein": 8,
-    "fat": 0,
-    "carbs": 4
   },
   {
     "name": "Мороженое",
