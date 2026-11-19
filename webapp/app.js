@@ -627,11 +627,6 @@ function renderProgressTab(data) {
     items: weekItems(w),
   }));
 
-  const exerciseCharts = series.map(sparkline).join('');
-  const trainCharts = exerciseCharts
-    || '<p class="muted">Пока нет весов в журнале: запишите тренировку через редактор — '
-      + 'тогда здесь появится линия по каждому упражнению.</p>';
-
   const weeks = (history.weeks || []).map(item =>
     '<div class="muted">Неделя ' + item.week + ': ✅ ' + item.done
     + (item.partial ? ' · 🟡 ' + item.partial : '')
@@ -671,7 +666,6 @@ function renderProgressTab(data) {
     + '</div>'
 
     + '<details class="card" open><summary><b>📈 График тренировок</b></summary>'
-    + trainCharts
     + barChart('Тренировок за неделю', workoutsBars, 'workouts', 'шт')
     + '<details style="margin-top:8px"><summary class="muted">📦 Тоннаж за неделю (кг × повторения)</summary>'
     + barChart('Объём за неделю', tonnage, 'tonnage', 'кг')
@@ -723,7 +717,13 @@ function renderProgressTab(data) {
                   : '')
               + Object.keys(item.reasons || {}).slice(0, 1).map(group =>
                   ' · ' + esc(group) + ': ' + Object.keys(item.reasons[group]).length + ' прич.')
-                .join('') + '</div>').join('');
+                .join('')
+              + (item.kcal ? ' · ~' + item.kcal + ' ккал' : '')
+              + '</div>'
+              + (item.exercises || []).map(ex =>
+                  '<div class="muted" style="padding-left:14px">' + esc(ex.name) + ' — '
+                  + ex.sets + '×' + ex.reps + (ex.weight ? ' · ' + ex.weight + ' кг' : '') + '</div>'
+                ).join('')).join('');
             return '<details><summary class="muted">Неделя ' + week.week + ': ✅ ' + week.done
               + (week.partial ? ' · 🟡 ' + week.partial : '')
               + (week.skipped ? ' · 😕 ' + week.skipped : '')

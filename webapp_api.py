@@ -316,6 +316,12 @@ async def api_overview(request: web.Request) -> web.Response:
             history = await progress.history_weeks(user_id, max(1, period // 7))
             payload["history"] = history
             payload["details"] = await progress.day_details(user_id, min(30, max(7, period)))
+            for item in payload["details"]:
+                sets_total = int(item.get("sets_total", 0))
+                if sets_total:
+                    # Оценка: MET 6, 10 минут разминки + ~2.25 минуты на подход
+                    hours = (10 + sets_total * 2.25) / 60
+                    item["kcal"] = round(6.0 * profile.weight * hours)
             payload["weight_log"] = await progress.weight_series(user_id, max(30, period))
             payload["weight_trend"] = await progress.weight_trend(user_id, max(30, period))
             if payload["weight_log"]:

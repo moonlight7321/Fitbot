@@ -478,6 +478,12 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
             "SELECT week, day_index, slug, reason, created_at FROM failures WHERE user_id = ?",
             (user_id,),
         ).fetchall()
+        set_rows = conn.execute(
+            """SELECT w.done_on, w.day_index, ws.slug, ws.weight, ws.reps
+               FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
+               WHERE w.user_id = ? ORDER BY ws.id""",
+            (user_id,),
+        ).fetchall()
         tonnage_rows = conn.execute(
             """SELECT w.done_on, w.day_index, SUM(ws.weight * ws.reps) AS total
                FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
@@ -520,6 +526,24 @@ def _day_details_sync(user_id: int, limit: int, offset: int = 0) -> list:
             item["status"] = "skip"
         elif value == 2 and item["status"] != "done":
             item["status"] = "partial"
+
+    for row in set_rows:
+        date = row["done_on"] or ""
+        if date < since:
+            continue
+        item = bucket(date, int(row["day_index"]))
+        exercise = lib.by_slug(row["slug"])
+        name = exercise.name_ru if exercise else row["slug"]
+        entry = next(
+            (x for x in item.setdefault("exercises", []) if x["name"] == name), None
+        )
+        if entry is None:
+            entry = {"name": name, "sets": 0, "reps": 0, "weight": 0.0}
+            item["exercises"].append(entry)
+        entry["sets"] += 1
+        entry["reps"] = max(entry["reps"], int(row["reps"] or 0))
+        entry["weight"] = max(entry["weight"], float(row["weight"] or 0))
+        item["sets_total"] = item.get("sets_total", 0) + 1
 
     for row in tonnage_rows:
         date = row["done_on"] or ""
