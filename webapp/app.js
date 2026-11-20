@@ -28,6 +28,15 @@ window.addEventListener("unhandledrejection", event => {
 
 let altScrollY = null;  // куда вернуть экран после закрытия блока замен
 
+function restoreAltScroll() {
+  if (altScrollY === null) return;
+  const target = altScrollY;
+  altScrollY = null;
+  // Сначала останавливаем анимацию прокрутки к заменам, потом едем назад плавно
+  window.scrollTo({ top: window.scrollY, behavior: "auto" });
+  requestAnimationFrame(() => window.scrollTo({ top: target, behavior: "smooth" }));
+}
+
 const state = { overview: null, exercises: null, tab: "plan", period: 30 };
 
 function headers() {
@@ -238,7 +247,7 @@ function renderPlan(data) {
     ? '<div class="day"><h3>День ' + (nextIndex + 1) + ' из ' + data.plan.days.length
       + ' · ' + esc(currentDay.title) + '</h3>'
       + '<ol class="list">' + currentDay.slots.map(s =>
-          '<li>' + esc(s.name) + ' — ' + setsPhrase(s.sets, esc(s.reps))
+          '<li>' + esc(s.name) + ' — ' + esc(s.scheme || setsPhrase(s.sets, s.reps, s.timed))
           + (s.weight ? ' · <b>' + esc(s.weight) + '</b>' : '') + '</li>').join('') + '</ol></div>'
     : '<p class="muted">Упражнений не нашлось под текущие условия.</p>';
 
@@ -252,7 +261,7 @@ function renderPlan(data) {
   const fullWeek = data.plan.days.map((day, i) =>
     '<div class="day" style="margin-top:8px"><h3>День ' + (i + 1) + ' · ' + esc(day.title) + '</h3>'
     + '<ol class="list">' + day.slots.map(s =>
-        '<li>' + esc(s.name) + ' — ' + setsPhrase(s.sets, esc(s.reps))
+        '<li>' + esc(s.name) + ' — ' + esc(s.scheme || setsPhrase(s.sets, s.reps, s.timed))
         + (s.weight ? ' · <b>' + esc(s.weight) + '</b>' : '') + '</li>').join('') + '</ol></div>'
   ).join('');
 
@@ -430,12 +439,15 @@ function renderJournal(data) {
     + '<div id="wk-result" class="muted" style="margin-top:8px"></div></div>';
 }
 
-function setsPhrase(sets, reps) {
+function setsPhrase(sets, reps, timed) {
   const mod100 = sets % 100, mod10 = sets % 10;
   let word = "подходов";
   if (mod100 >= 11 && mod100 <= 14) word = "подходов";
   else if (mod10 === 1) word = "подход";
   else if (mod10 >= 2 && mod10 <= 4) word = "подхода";
+  if (timed) {
+    return sets + " " + word + ": " + reps + " сек";
+  }
   return sets + " " + word + " по " + reps + " повторений";
 }
 
@@ -986,10 +998,7 @@ function render() {
             document.querySelectorAll("[data-ed-name]").forEach(other => other.classList.remove("active"));
             box.classList.add("hidden");
             box.innerHTML = "";
-            if (altScrollY !== null) {
-              window.scrollTo({ top: altScrollY, behavior: "auto" });
-              altScrollY = null;
-            }
+            restoreAltScroll();
           };
           box.querySelectorAll("[data-alt]").forEach(altBtn => {
             altBtn.onclick = () => {
@@ -1003,20 +1012,14 @@ function render() {
               btn.classList.remove("active");
               box.classList.add("hidden");
               box.innerHTML = "";
-              if (altScrollY !== null) {
-                window.scrollTo({ top: altScrollY, behavior: "auto" });
-                altScrollY = null;
-              }
+              restoreAltScroll();
             };
           });
         } catch (e) {
           btn.classList.remove("active");
           box.innerHTML = '<div class="muted">Не удалось получить замены. Попробуйте ещё раз.</div>';
           toast("Не удалось получить замены");
-          if (altScrollY !== null) {
-            window.scrollTo({ top: altScrollY, behavior: "auto" });
-            altScrollY = null;
-          }
+          restoreAltScroll();
         }
       };
     });

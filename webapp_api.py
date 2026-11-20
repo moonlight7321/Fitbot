@@ -315,6 +315,12 @@ async def api_overview(request: web.Request) -> web.Response:
                              "reps": (weights.get(s.exercise.slug) or {}).get("reps") or s.reps,
                              "timed": s.exercise.timed,
                              "unit": "сек" if s.exercise.timed else "раз",
+                             "scheme": planner.sets_phrase(
+                                 _adjusted_sets(s, week["deload"], pain),
+                                 str((weights.get(s.exercise.slug) or {}).get("reps") or s.reps),
+                                 profile.goal,
+                                 s.exercise.timed,
+                             ),
                              "weight": (weights.get(s.exercise.slug) or {}).get("label"),
                              "weight_value": weights.get(s.exercise.slug, {}).get("value", 0)}
                             for s in day.slots
