@@ -2221,11 +2221,11 @@ async def main() -> None:
 
     qr = orders.qr_file()
     logger.info(
-        "Оплата переводом: режим=%s, ссылка=%s, QR=%s, цена=%s руб, TTL=%s мин",
+        "Оплата переводом: режим=%s, ссылка=%s, QR=%s, тарифы=%s, TTL=%s мин",
         orders.PAYMENT_MODE,
         "задана" if orders.PAYMENT_LINK else "НЕ ЗАДАНА",
         qr.name if qr else "файла нет",
-        orders.PRICE_RUB,
+        ", ".join(f"{plan.label}: {plan.price:.0f} ₽" for plan in orders.PLANS),
         orders.ORDER_TTL_MINUTES,
     )
 
