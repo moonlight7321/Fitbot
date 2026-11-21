@@ -322,10 +322,11 @@ function repScheme(reps, sets, timed) {
     return result;
   }
   const numbers = (String(reps).match(/\d+/g) || ["10"]).map(Number);
-  const top = Math.max.apply(null, numbers);
-  const floor = Math.max(1, top - 2);
+  let top = Math.max.apply(null, numbers);
+  const step = top >= 20 ? Math.round(top * 0.2) : 1;
+  const floor = Math.max(8, Math.round(top * 0.5));
   const result = [];
-  for (let i = 0; i < sets; i += 1) result.push(Math.max(floor, top - i));
+  for (let i = 0; i < sets; i += 1) result.push(Math.max(floor, top - i * step));
   return result;
 }
 

@@ -50,6 +50,27 @@ GOAL_PARAMS = {
     "tone": {"sets": 3, "reps": "12–15", "rest": 60},
 }
 
+# С собственным весом прогресс идёт через повторения, а не килограммы:
+# опытному человеку 8–10 приседаний — это разминка, а не рабочий подход.
+BODYWEIGHT_EQUIPMENT = {"свой вес", "турник", "брусья"}
+BODYWEIGHT_REPS = {
+    "Ноги": {"новичок": "10–15", "средний": "15–25", "продвинутый": "25–40"},
+    "Спина": {"новичок": "6–10", "средний": "10–15", "продвинутый": "12–20"},
+    "Грудь": {"новичок": "8–12", "средний": "12–20", "продвинутый": "20–30"},
+    "Плечи": {"новичок": "8–12", "средний": "12–18", "продвинутый": "15–25"},
+    "Руки": {"новичок": "8–12", "средний": "12–18", "продвинутый": "15–25"},
+    "Пресс": {"новичок": "8–12", "средний": "12–20", "продвинутый": "20–30"},
+}
+DEFAULT_BODYWEIGHT_REPS = {"новичок": "8–12", "средний": "12–18", "продвинутый": "18–25"}
+
+
+def reps_for(exercise: "lib.Exercise", profile: "prof.Profile", fallback: str) -> str:
+    """Повторения под упражнение: для своего веса — по опыту и группе мышц."""
+    if exercise.equipment not in BODYWEIGHT_EQUIPMENT:
+        return fallback
+    by_level = BODYWEIGHT_REPS.get(exercise.group, DEFAULT_BODYWEIGHT_REPS)
+    return by_level.get(profile.experience, fallback)
+
 
 def _top_reps(reps: str) -> int:
     """Верхняя граница диапазона: «8–10» → 10, «12–15» → 15, «10» → 10."""
@@ -71,7 +92,10 @@ def rep_scheme(goal: str, sets: int, top: int, timed: bool = False) -> List[int]
 
     floor = 8 if goal == "mass" else 12
     top = max(top, floor)
-    return [max(floor, top - index) for index in range(max(1, sets))]
+    # На высоких повторениях шаг больше: 40 → 32 → 24, а не 40 → 39 → 38
+    step = max(1, round(top * 0.2)) if top >= 20 else 1
+    floor = max(floor, round(top * 0.5))
+    return [max(floor, top - index * step) for index in range(max(1, sets))]
 
 
 def sets_phrase(sets: int, reps: str, goal: str = "mass", timed: bool = False) -> str:
@@ -195,7 +219,12 @@ def build(profile: "prof.Profile", replacements: dict | None = None) -> Plan:
                 continue
             used.add(ex.slug)
             day.slots.append(
-                Slot(exercise=ex, sets=params["sets"], reps=params["reps"], rest=params["rest"])
+                Slot(
+                    exercise=ex,
+                    sets=params["sets"],
+                    reps=reps_for(ex, profile, params["reps"]),
+                    rest=params["rest"],
+                )
             )
         days.append(day)
 
