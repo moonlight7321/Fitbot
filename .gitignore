@@ -1,5 +1,7 @@
 .env
 drafts.json
+post_history.json
+content_state.json
 fitbot.db
 fitbot.db-journal
 fitbot.db-wal
