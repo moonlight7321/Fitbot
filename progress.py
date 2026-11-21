@@ -1050,6 +1050,11 @@ def _step_for(equipment: str) -> float:
 PROGRESSION_SESSIONS = int(os.getenv("PROGRESSION_SESSIONS", "2"))
 
 
+def _is_bodyweight(equipment: str, weight: float) -> bool:
+    eq = (equipment or "").lower()
+    return weight <= 0 or any(word in eq for word in ("свой вес", "турник", "брус", "скакалк"))
+
+
 def _load_streak_sync(user_id: int, slug: str, weight: float, min_reps: int) -> int:
     """Сколько тренировок подряд упражнение сделано на том же весе и не ниже повторов."""
     conn = _open()
@@ -1092,7 +1097,7 @@ def next_plan(goal: str, equipment: str, sets: Sequence[sqlite3.Row],
     top = _top_reps(goal)
     weight = float(sets[-1]["weight"])
     best = max(int(s["reps"]) for s in sets)
-    bodyweight = weight <= 0 or "свой вес" in (equipment or "").lower()
+    bodyweight = _is_bodyweight(equipment, weight)
     ready = allow_increase and sessions >= PROGRESSION_SESSIONS
 
     if bodyweight:
@@ -1118,7 +1123,7 @@ def next_advice(goal: str, equipment: str, sets: Sequence[sqlite3.Row],
     top = _top_reps(goal)
     weight = float(sets[-1]["weight"])
     best = max(int(s["reps"]) for s in sets)
-    bodyweight = weight <= 0 or "свой вес" in (equipment or "").lower()
+    bodyweight = _is_bodyweight(equipment, weight)
     ready = allow_increase and sessions >= PROGRESSION_SESSIONS
 
     if not allow_increase:

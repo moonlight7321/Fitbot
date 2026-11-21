@@ -348,8 +348,9 @@ async def api_overview(request: web.Request) -> web.Response:
                     # Оценка: MET 6, 10 минут разминки + ~2.25 минуты на подход
                     hours = (10 + sets_total * 2.25) / 60
                     item["kcal"] = round(6.0 * profile.weight * hours)
-            payload["weight_log"] = await progress.weight_series(user_id, max(30, period))
-            payload["weight_trend"] = await progress.weight_trend(user_id, max(30, period))
+            # Вес — отдельная история: период тренировок (7/30/90) её не обрезает
+            payload["weight_log"] = await progress.weight_series(user_id, 365)
+            payload["weight_trend"] = await progress.weight_trend(user_id, 365)
             if payload["weight_log"]:
                 last_weight = payload["weight_log"][-1]["weight"]
                 diff = last_weight - profile.weight

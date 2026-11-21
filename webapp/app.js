@@ -556,7 +556,10 @@ function sparkline(series) {
 
   return ''
     + '<div class="chart">'
-    + '<div class="muted">' + esc(series.name) + ' · ' + min + ' → ' + max
+    + '<div class="muted">' + esc(series.name) + ' · '
+    + (points.length > 1
+        ? points[0].weight + ' → ' + points[points.length - 1].weight
+        : points[0].weight)
     + ' ' + esc(series.unit || "кг")
     + (series.reps ? ' · повторения ' + series.reps[0] + ' → ' + series.reps[1] : '')
     + ' · точек: ' + points.length + '</div>'
@@ -897,12 +900,14 @@ function renderProgressTab(data) {
     + exerciseChart
     + '</details>'
 
-    + '<details class="card" open><summary><b>📦 Тоннаж за неделю, кг</b></summary>'
-    + vChart('Все упражнения за неделю, кг', tonnage, 'tonnage', 'кг', 'warn')
-    + (weekly.some(w => w.estimated)
-        ? '<div class="muted">* часть подходов восстановлена по плану.</div>'
+    + (weekly.some(w => Number(w.tonnage) > 0)
+        ? '<details class="card" open><summary><b>📦 Тоннаж за неделю, кг</b></summary>'
+          + vChart('Все упражнения за неделю, кг', tonnage, 'tonnage', 'кг', 'warn')
+          + (weekly.some(w => w.estimated)
+              ? '<div class="muted">* часть подходов восстановлена по плану.</div>'
+              : '')
+          + '</details>'
         : '')
-    + '</details>'
 
     + '<div class="card"><h2>Вес тела</h2>'
     + '<p class="muted">Взвешивайтесь примерно раз в две недели, утром натощак: '
@@ -913,8 +918,10 @@ function renderProgressTab(data) {
           ? String(data.profile_raw.created_at).slice(0, 10)
           : new Date().toISOString().slice(0, 10);
         const points = (data.weight_log || []).map(w => ({ date: w.date, weight: w.weight }));
-        if (profileWeight && (!points.length || points[0].date > createdAt)) {
-          points.unshift({ date: createdAt, weight: profileWeight });
+        // Стартовую точку из анкеты показываем только если взвешиваний ещё нет:
+        // иначе она рисует ложный скачок веса с даты заполнения анкеты
+        if (profileWeight && !points.length) {
+          points.push({ date: createdAt, weight: profileWeight });
         }
         if (!points.length) {
           return '<p class="muted">Заполните вес в анкете — график начнётся с него.</p>';
