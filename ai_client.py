@@ -206,13 +206,21 @@ class DeepSeekClient:
             raise AIError("DeepSeek вернул пустой ответ")
         return content
 
-    async def generate_post(self, topic: str, hint: str = "") -> str:
+    async def generate_post(self, topic: str, hint: str = "", avoid: list[str] | None = None) -> str:
         """Первый запрос: пост + промт картинки + самопроверка (три блока)."""
         safe_topic = (topic or "").strip()[:400] or "Свободная тема про спорт и питание"
         extra = (hint or "").strip()[:500]
         user_text = f"Тема поста: {safe_topic}\n"
         if extra:
             user_text += f"Дополнительные требования: {extra}\n"
+        recent = [part.strip()[:220] for part in (avoid or []) if part.strip()][:5]
+        if recent:
+            user_text += (
+                "Не повторяй эти недавние посты: ни заголовки, ни примеры, ни структуру. "
+                "Найди другой угол и другие конкретные примеры:\n"
+                + "\n---\n".join(recent)
+                + "\n"
+            )
         user_text += (
             "Сгенерируй пост по правилам и верни ответ строго в трёх блоках: "
             "[ПОСТ], [ИДЕЯ ДЛЯ КАРТИНКИ], [ПРОВЕРКА]."

@@ -101,7 +101,7 @@ TOPICS: List[Dict[str, str]] = [
 
 # Окна «без повторов». Направлений и форматов ровно по семь: окно 7
 # невозможно (нечем заменить все семь), поэтому 6 — максимум.
-WINDOW_TOPICS = 8
+WINDOW_TOPICS = 20
 WINDOW_CATEGORIES = 6
 WINDOW_FORMATS = 6
 

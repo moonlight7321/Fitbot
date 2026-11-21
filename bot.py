@@ -228,18 +228,80 @@ class OwnerOnlyMiddleware(BaseMiddleware):
 
 
 # ---------------------------------------------------------------------------
-# Генерация контента
+# История постов: чтобы модель не повторяла недавние формулировки
 # ---------------------------------------------------------------------------
+_STOPWORDS = {
+    "этот", "эта", "это", "эти", "как", "что", "чтобы", "для", "при", "без",
+    "или", "если", "так", "все", "ещё", "уже", "только", "можно", "нужно",
+    "будет", "есть", "быть", "свой", "свои", "свою", "себя", "тебя", "вас",
+    "они", "она", "оно", "мы", "вы", "они", "чем", "тем", "где", "когда",
+}
+
+
+def _post_history_path() -> str:
+    db_path = os.path.abspath(os.getenv("DB_PATH", "fitbot.db"))
+    return os.path.join(os.path.dirname(db_path), "post_history.json")
+
+
+def _load_post_history() -> List[Dict]:
+    try:
+        with open(_post_history_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _save_post_history(items: List[Dict]) -> None:
+    try:
+        with open(_post_history_path(), "w", encoding="utf-8") as handle:
+            json.dump(items[-40:], handle, ensure_ascii=False)
+    except OSError:
+        logger.warning("Не удалось сохранить историю постов")
+
+
+def _words(text: str) -> set:
+    return {
+        word for word in re.findall(r"[а-яёa-z]{4,}", (text or "").lower())
+        if word not in _STOPWORDS
+    }
+
+
+def _similarity(first: str, second: str) -> float:
+    left, right = _words(first), _words(second)
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
 async def generate_content(topic: str, hint: str = "", category: str = "") -> GeneratedContent:
     """Полный цикл: генерация → проверка объёма → проверка → исправление → картинка."""
     settings, ai = ctx.settings, ctx.ai
     notes: List[str] = []
 
-    raw = await ai.generate_post(topic, hint)
+    history = _load_post_history()
+    recent_posts = [item.get("post", "") for item in history[-5:] if item.get("post")]
+    raw = await ai.generate_post(topic, hint, recent_posts)
     sections = parse_sections(raw)
     post = clean_post(sections["post"])
     if not post:
         raise AIError("DeepSeek не вернул блок [ПОСТ]")
+
+    # --- Похожесть на недавние посты: одна попытка переписать ---
+    if recent_posts:
+        score = max(_similarity(post, previous) for previous in recent_posts)
+        if score >= 0.5:
+            logger.info("Пост похож на недавний (%.2f), прошу переписать", score)
+            try:
+                post = await ai.rewrite_post(
+                    post,
+                    "Пост слишком похож на предыдущие: те же мысли, примеры и структура. "
+                    "Перепиши с другим углом, другими конкретными примерами и другой структурой, "
+                    "сохрани тему, призыв и хэштеги.",
+                )
+                notes.append(f"Пост переписан: совпадение с прошлым {score:.0%}.")
+            except AIError as exc:
+                logger.warning("Не удалось переписать похожий пост: %s", exc)
 
     image_prompt = sections["image"].strip()
     model_check = sections["check"].strip()
@@ -316,6 +378,13 @@ async def generate_content(topic: str, hint: str = "", category: str = "") -> Ge
     final_length = check_length(post, settings.post_min_chars, settings.post_max_chars)
     if final_length:
         notes.append(f"Итоговая длина: {len(post)} символов ({final_length}).")
+
+    history.append({
+        "topic": topic,
+        "post": post[:400],
+        "at": datetime.now(ZoneInfo(settings.timezone)).strftime("%Y-%m-%dT%H:%M:%S"),
+    })
+    _save_post_history(history)
 
     return GeneratedContent(
         topic=topic,
