@@ -153,7 +153,7 @@ def _user_id(request: web.Request) -> Optional[int]:
 @web.middleware
 async def telegram_auth(request: web.Request, handler):
     """Пропускает только запросы с валидной подписью initData."""
-    if request.path.startswith(("/static/", "/media/")) or request.path == "/":
+    if request.path.startswith(("/static/", "/media/")) or request.path in ("/", "/api/health"):
         return await handler(request)
 
     token = request.app["bot_token"]
@@ -578,6 +578,18 @@ async def api_error(request: web.Request) -> web.Response:
         except Exception:  # noqa: BLE001 — сеть не должна ломать ответ клиенту
             logger.warning("Не удалось отправить JS-ошибку владельцу")
     return web.json_response({"ok": True})
+
+
+async def api_health(request: web.Request) -> web.Response:
+    """Публичная диагностика: жив ли мини-апп и тот ли токен в окружении."""
+    token = request.app.get("bot_token") or ""
+    fingerprint = hashlib.sha256(token.encode()).hexdigest()[:8] if token else "none"
+    return web.json_response({
+        "ok": True,
+        "build": _build_stamp(),
+        "token_fp": fingerprint,
+        "time": datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d %H:%M:%S"),
+    })
 
 
 async def api_mealplan(request: web.Request) -> web.Response:
@@ -1206,6 +1218,7 @@ def create_app(settings: Settings) -> web.Application:
     # превращается в media/exercises/exercises/...
     app.router.add_static("/media/", exercises.MEDIA_DIR.parent, show_index=False)
     app.router.add_get("/api/overview", api_overview)
+    app.router.add_get("/api/health", api_health)
     app.router.add_get("/api/exercises", api_exercises)
     app.router.add_get("/api/progress", api_progress)
     app.router.add_post("/api/workouts", api_workout_add)

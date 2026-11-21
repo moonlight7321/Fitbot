@@ -2091,6 +2091,16 @@ async def main() -> None:
         token=settings.telegram_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    try:
+        me = await bot.get_me()
+        logger.info("Токен принят Telegram: @%s", me.username)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "ТОКЕН НЕ ПРИНЯТ TELEGRAM: %s. Проверьте TELEGRAM_TOKEN в панели — "
+            "старый или чужой токен означает, что бот не получает сообщения, "
+            "а мини-апп отвечает 401.",
+            exc,
+        )
     dispatcher = Dispatcher()
     dispatcher.include_router(pay_router)   # оплата и /sub — всем
     dispatcher.include_router(router)
