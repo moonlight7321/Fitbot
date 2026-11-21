@@ -724,10 +724,7 @@ function renderProgressTab(data) {
     label: "Н" + w.week + (w.estimated ? "*" : ""),
     tonnage: w.tonnage,
   }));
-  const workoutsBars = weekly.map(w => ({
-    label: "Н" + w.week,
-    workouts: w.workouts,
-  }));
+
 
   const weeks = (history.weeks || []).map(item =>
     '<div class="muted">Неделя ' + item.week + ': ✅ ' + item.done
@@ -752,6 +749,31 @@ function renderProgressTab(data) {
     '<button class="tab' + (state.period === d ? ' active' : '') + '" data-period="' + d + '">'
     + d + ' дн.</button>').join('');
 
+  const seriesAll = (data.progress && data.progress.series_all) || [];
+  const selectedSlug = state.exerciseSlug || (seriesAll[0] ? seriesAll[0].slug : "");
+  const selectedSeries = seriesAll.find(item => item.slug === selectedSlug) || seriesAll[0] || null;
+
+  let exerciseChart = '<p class="muted">Нет данных: запишите тренировку с весами или повторениями.</p>';
+  if (selectedSeries) {
+    const hasWeight = selectedSeries.points.some(point => Number(point.weight) > 0);
+    const unit = hasWeight ? "кг" : (selectedSeries.unit === "сек" ? "сек" : "повторения");
+    exerciseChart = sparkline({
+      name: selectedSeries.name + ", " + unit,
+      points: selectedSeries.points.map(point => ({
+        date: point.date,
+        weight: hasWeight ? Number(point.weight) : Number(point.reps),
+      })),
+    });
+  }
+
+  const exerciseOptions = seriesAll.length
+    ? '<label class="field">Упражнение<select id="ex-select" class="select">'
+      + seriesAll.map(item => '<option value="' + esc(item.slug) + '"'
+          + (selectedSeries && item.slug === selectedSeries.slug ? ' selected' : '') + '>'
+          + esc(item.name) + '</option>').join('')
+      + '</select></label>'
+    : '';
+
   const caloriesChart = nutrition.length
     ? barChart('Калории по дням', nutrition, 'kcal', 'ккал', data.calories ? data.calories.target : null)
     : '<p class="muted">Пока нет записей в дневнике.</p>';
@@ -767,9 +789,13 @@ function renderProgressTab(data) {
             .map(w => esc(w.group) + ' (' + w.count + ')').join(', ') + '</div>' : '')
     + '</div>'
 
-    + '<details class="card" open><summary><b>📈 График тренировок</b></summary>'
-    + vChart('Тренировок за неделю, шт', workoutsBars, 'workouts', 'шт', '')
-    + vChart('Тоннаж за неделю, кг', tonnage, 'tonnage', 'кг', 'warn')
+    + '<details class="card" open><summary><b>📈 Прогресс по упражнению</b></summary>'
+    + exerciseOptions
+    + exerciseChart
+    + '</details>'
+
+    + '<details class="card" open><summary><b>📦 Тоннаж за неделю, кг</b></summary>'
+    + vChart('Все упражнения за неделю, кг', tonnage, 'tonnage', 'кг', 'warn')
     + (weekly.some(w => w.estimated)
         ? '<div class="muted">* часть подходов восстановлена по плану.</div>'
         : '')
@@ -1135,6 +1161,12 @@ function render() {
     };
     const weightSave = document.getElementById("weight-save");
     if (weightSave) weightSave.onclick = () => saveWeight(false);
+    const exSelect = document.getElementById("ex-select");
+    if (exSelect) exSelect.onchange = () => {
+      state.exerciseSlug = exSelect.value;
+      render();
+    };
+
     const weightReminder = document.getElementById("weight-reminder");
     if (weightReminder) weightReminder.onchange = async () => {
       try {

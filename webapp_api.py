@@ -738,6 +738,23 @@ async def _progress_payload(user_id: int, period: int = 30) -> dict:
             ],
         })
 
+    # Полные ряды по упражнениям — для графика с выбором упражнения
+    series_all = []
+    for item in items[:20]:
+        points = await progress.series(user_id, item["slug"], max(7, period))
+        if not points:
+            continue
+        exercise = exercises.by_slug(item["slug"])
+        series_all.append({
+            "slug": item["slug"],
+            "name": item["name"],
+            "unit": exercise.unit if exercise else "раз",
+            "points": [
+                {"date": p["done_on"], "weight": float(p["weight"]), "reps": int(p["reps"])}
+                for p in points
+            ],
+        })
+
     weak = await progress.weak_groups(user_id)
     breakdown = await progress.breakdown(user_id)
     weeks_limit = max(1, period // 7)
@@ -749,6 +766,7 @@ async def _progress_payload(user_id: int, period: int = 30) -> dict:
         "streak": history["streak"],
         "items": items[:12],
         "series": series,
+        "series_all": series_all,
         "weak_groups": [{"group": group, "count": count} for group, count in weak[:5]],
         "weekly": weekly,
         "breakdown": breakdown,
