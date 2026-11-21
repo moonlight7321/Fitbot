@@ -52,16 +52,17 @@ GOAL_PARAMS = {
 
 # С собственным весом прогресс идёт через повторения, а не килограммы:
 # опытному человеку 8–10 приседаний — это разминка, а не рабочий подход.
-BODYWEIGHT_EQUIPMENT = {"свой вес", "турник", "брусья"}
+BODYWEIGHT_EQUIPMENT = {"свой вес", "турник", "брусья", "скакалка"}
+# Ключи опыта — как в анкете: novice / middle / advanced
 BODYWEIGHT_REPS = {
-    "Ноги": {"новичок": "10–15", "средний": "15–25", "продвинутый": "25–40"},
-    "Спина": {"новичок": "6–10", "средний": "10–15", "продвинутый": "12–20"},
-    "Грудь": {"новичок": "8–12", "средний": "12–20", "продвинутый": "20–30"},
-    "Плечи": {"новичок": "8–12", "средний": "12–18", "продвинутый": "15–25"},
-    "Руки": {"новичок": "8–12", "средний": "12–18", "продвинутый": "15–25"},
-    "Пресс": {"новичок": "8–12", "средний": "12–20", "продвинутый": "20–30"},
+    "Ноги": {"novice": "10–15", "middle": "15–25", "advanced": "25–40"},
+    "Спина": {"novice": "6–10", "middle": "10–15", "advanced": "12–20"},
+    "Грудь": {"novice": "8–12", "middle": "12–20", "advanced": "20–30"},
+    "Плечи": {"novice": "8–12", "middle": "12–18", "advanced": "15–25"},
+    "Руки": {"novice": "8–12", "middle": "12–18", "advanced": "15–25"},
+    "Пресс": {"novice": "8–12", "middle": "12–20", "advanced": "20–30"},
 }
-DEFAULT_BODYWEIGHT_REPS = {"новичок": "8–12", "средний": "12–18", "продвинутый": "18–25"}
+DEFAULT_BODYWEIGHT_REPS = {"novice": "8–12", "middle": "12–18", "advanced": "18–25"}
 
 
 def reps_for(exercise: "lib.Exercise", profile: "prof.Profile", fallback: str) -> str:
@@ -257,11 +258,21 @@ def build(profile: "prof.Profile", replacements: dict | None = None) -> Plan:
     if excluded:
         note += " Упражнения с нагрузкой на проблемную зону исключены."
 
-    note += (
-        " Веса со знаком «≈» — стартовый ориентир. Если окажется тяжело или, "
-        "наоборот, легко — поменяйте вес на следующей тренировке: бот запомнит "
-        "и будет считать прогрессию от него."
+    has_weighted = any(
+        slot.exercise.equipment not in BODYWEIGHT_EQUIPMENT
+        for day in days for slot in day.slots
     )
+    if has_weighted:
+        note += (
+            " Веса со знаком «≈» — стартовый ориентир. Если окажется тяжело или, "
+            "наоборот, легко — поменяйте вес на следующей тренировке: бот запомнит "
+            "и будет считать прогрессию от него."
+        )
+    else:
+        note += (
+            " Прогресс без снарядов — через повторения: когда верхняя граница "
+            "даётся легко, добавьте повторение или усложните вариант упражнения."
+        )
     if profile.goal == "mass":
         note += " Вес подбирайте так, чтобы последние 2 повтора давались тяжело, но без потери техники."
     elif profile.goal == "relief":
@@ -274,7 +285,7 @@ def start_weight(body_weight: float, exercise) -> float:
     equipment = (exercise.equipment or "").lower()
     group = exercise.group
 
-    if "свой вес" in equipment or body_weight <= 0:
+    if any(word in equipment for word in ("свой вес", "турник", "брусь", "скакалк")) or body_weight <= 0:
         return 0.0
 
     if "гантел" in equipment:
@@ -308,7 +319,9 @@ def render(profile: "prof.Profile", plan: Plan, weights: dict | None = None,
     lines = [
         "<b>Ваш план</b>" if only_day is not None else "<b>Ваш план на неделю</b>",
         f"{profile.goal_title} · {profile.experience_title} · {profile.equipment_title}",
-        f"{profile.days} тренировки(и) в неделю по {profile.minutes} минут",
+        f"{profile.days} " + ("тренировка" if profile.days == 1 else
+                             "тренировки" if 2 <= profile.days <= 4 else "тренировок")
+        + f" в неделю по {profile.minutes} минут",
         f"Ограничения: {profile.limitations_title}",
     ]
     if deload:
