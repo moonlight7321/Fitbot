@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 import exercises as lib
-import exercises as lib
 import profiles as prof
 
 
@@ -227,7 +226,7 @@ def build(profile: "prof.Profile", replacements: dict | None = None) -> Plan:
             "нагрузку должен согласовать врач: этот план — общая информация, не назначение."
         )
     if excluded:
-        note += f" Упражнения с нагрузкой на проблемную зону исключены."
+        note += " Упражнения с нагрузкой на проблемную зону исключены."
 
     note += (
         " Веса со знаком «≈» — стартовый ориентир. Если окажется тяжело или, "

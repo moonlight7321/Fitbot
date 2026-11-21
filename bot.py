@@ -1469,7 +1469,6 @@ async def _send_workout_reminders(bot: Bot) -> None:
     now = datetime.now(tz)
     today = now.strftime("%Y-%m-%d")
     weekday = now.isoweekday()
-    hhmm = now.strftime("%H:%M")
 
     for profile in await profiles.with_reminders():
         if weekday not in profile.weekdays:
