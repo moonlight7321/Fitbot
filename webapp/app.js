@@ -514,7 +514,13 @@ function sparkline(series) {
   return ''
     + '<div class="chart">'
     + '<div class="muted">' + esc(series.name) + ' · ' + min + ' → ' + max
-    + ' ' + esc(series.unit || "кг") + ' · точек: ' + points.length + '</div>'
+    + ' ' + esc(series.unit || "кг")
+    + (series.reps ? ' · повторения ' + series.reps[0] + ' → ' + series.reps[1] : '')
+    + ' · точек: ' + points.length + '</div>'
+    + ((series.details || []).length
+        ? '<div class="chart-details">' + series.details.map(line =>
+            '<div class="muted">' + esc(line) + '</div>').join('') + '</div>'
+        : '')
     + '<svg viewBox="0 0 ' + w + ' ' + h + '">'
     + grid
     + '<line x1="' + padL + '" y1="' + (h - padB) + '" x2="' + (w - padR) + '" y2="' + (h - padB)
@@ -757,13 +763,26 @@ function renderProgressTab(data) {
   if (selectedSeries) {
     const hasWeight = selectedSeries.points.some(point => Number(point.weight) > 0);
     const unit = hasWeight ? "кг" : (selectedSeries.unit === "сек" ? "сек" : "повторений");
+    const chartPoints = selectedSeries.points.map(point => ({
+      date: point.date,
+      weight: hasWeight ? Number(point.weight) : Number(point.reps),
+    }));
+    const reps = selectedSeries.points.map(point => Number(point.reps));
     exerciseChart = sparkline({
       name: selectedSeries.name + (hasWeight ? ", кг" : (selectedSeries.unit === "сек" ? ", сек" : ", повторения")),
       unit: unit,
-      points: selectedSeries.points.map(point => ({
-        date: point.date,
-        weight: hasWeight ? Number(point.weight) : Number(point.reps),
-      })),
+      points: chartPoints,
+      reps: hasWeight && reps.length > 1 ? [reps[0], reps[reps.length - 1]] : null,
+      details: selectedSeries.points.map(point => {
+        const day = shortDate(point.date);
+        if (hasWeight) {
+          return day + ' — ' + point.weight + ' кг × ' + point.reps + ' повт.';
+        }
+        if (selectedSeries.unit === "сек") {
+          return day + ' — ' + point.reps + ' сек';
+        }
+        return day + ' — ' + point.reps + ' повторений';
+      }),
     });
   }
 
