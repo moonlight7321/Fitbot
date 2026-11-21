@@ -663,5 +663,12 @@
     "protein": 10,
     "fat": 13,
     "carbs": 8
+  },
+  {
+    "name": "Овощи (микс)",
+    "kcal": 35,
+    "protein": 2,
+    "fat": 0.5,
+    "carbs": 5
   }
 ]

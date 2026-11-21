@@ -25,6 +25,7 @@ from aiohttp import ClientSession, web
 import calories
 import diary
 import exercises
+import nutrition
 import planner
 import profiles
 import progress
@@ -575,6 +576,29 @@ async def api_error(request: web.Request) -> web.Response:
         except Exception:  # noqa: BLE001 — сеть не должна ломать ответ клиенту
             logger.warning("Не удалось отправить JS-ошибку владельцу")
     return web.json_response({"ok": True})
+
+
+async def api_mealplan(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+
+    try:
+        days = int(request.query.get("days", "7"))
+    except ValueError:
+        days = 7
+    days = 7 if days <= 7 else 30
+
+    profile = await profiles.get(user_id)
+    if profile is None or not profile.has_body_data or not profile.activity:
+        return web.json_response(
+            {"error": "no profile", "message": "Заполните пол, возраст, рост, вес и активность"},
+            status=400,
+        )
+
+    plan = nutrition.build(profile, days)
+    return web.json_response({"days": plan})
 
 
 async def api_weight(request: web.Request) -> web.Response:
@@ -1150,6 +1174,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_post("/api/skip", api_skip)
     app.router.add_post("/api/profile", api_profile_save)
     app.router.add_post("/api/trial", api_trial)
+    app.router.add_get("/api/mealplan", api_mealplan)
     app.router.add_post("/api/weight", api_weight)
     app.router.add_post("/api/weight-reminder", api_weight_reminder)
     app.router.add_post("/api/error", api_error)

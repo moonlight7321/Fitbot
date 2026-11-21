@@ -631,6 +631,22 @@ function caloriesCard(data) {
     + '</div></div>';
 }
 
+function renderMealPlan(days) {
+  return days.map((day, index) =>
+    '<details' + (index === 0 ? ' open' : '') + ' style="margin-top:8px">'
+    + '<summary class="muted">' + esc(day.weekday) + ', ' + shortDate(day.date)
+    + ' · ' + day.kcal + ' ккал (цель ' + Math.round(day.target) + ')</summary>'
+    + day.meals.map(meal =>
+        '<div class="meal"><b>' + esc(meal.title) + '</b> '
+        + '<span class="muted">' + meal.kcal + ' ккал</span>'
+        + meal.items.map(item =>
+            '<div class="muted" style="padding-left:10px">' + esc(item.name) + ' — '
+            + item.grams + ' г · ' + item.kcal + ' ккал</div>').join('')
+        + '</div>').join('')
+    + '<div class="muted">Б ' + day.protein + ' · Ж ' + day.fat + ' · У ' + day.carbs + '</div>'
+    + '</details>').join('');
+}
+
 function renderDiary(data) {
   if (!data.access || !data.diary) return paywallCard("Дневник", data);
   const totals = data.diary.totals;
@@ -661,7 +677,18 @@ function renderDiary(data) {
     + '<div class="chips food-list" id="food-list">'
     + (data.foods || []).map(name =>
         '<button class="ghost food-item" data-food="' + esc(name) + '">' + esc(name) + '</button>').join('')
-    + '</div></div>';
+    + '</div>'
+    + '<div class="card"><h2>🍽 Рацион</h2>'
+    + '<p class="muted">Меню на основе вашей нормы калорий и продуктов из базы. '
+    + 'Каждый день — завтрак, обед, ужин и перекус.</p>'
+    + '<div class="input-row">'
+    + '<button class="primary" data-mealplan="7">На неделю</button>'
+    + '<button class="ghost" data-mealplan="30">На месяц</button>'
+    + (state.mealplan ? '<button class="ghost" id="mealplan-hide">Скрыть</button>' : '')
+    + '</div>'
+    + (state.mealplan ? renderMealPlan(state.mealplan) : '')
+    + '</div>'
+    + '</div>';
 }
 
 function renderCalories(data) {
@@ -983,6 +1010,26 @@ function render() {
   else view.innerHTML = renderDiary(data);
 
   if (state.tab === "diary" && data.access && data.diary) {
+    document.querySelectorAll("[data-mealplan]").forEach(btn => {
+      btn.onclick = async () => {
+        const days = Number(btn.dataset.mealplan) || 7;
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Генерирую…";
+        try {
+          const res = await api("/api/mealplan?days=" + days);
+          state.mealplan = res.days || [];
+          render();
+        } catch (e) {
+          btn.disabled = false;
+          btn.textContent = label;
+          toast(e.message || "Не удалось построить рацион");
+        }
+      };
+    });
+    const hidePlan = document.getElementById("mealplan-hide");
+    if (hidePlan) hidePlan.onclick = () => { state.mealplan = null; render(); };
+
     const foodFilter = document.getElementById("food-filter");
     if (foodFilter) foodFilter.oninput = () => {
       const query = foodFilter.value.trim().toLowerCase().replace(/ё/g, "е");

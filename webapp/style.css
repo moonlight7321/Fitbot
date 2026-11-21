@@ -91,6 +91,7 @@ details.bar-wrap > summary.bar-row::-webkit-details-marker { display: none; }
 .chart-details { margin-top: 6px; display: grid; gap: 2px; }
 .point-dot { cursor: pointer; }
 .point-info { margin-top: 4px; min-height: 18px; color: var(--text); }
+.meal { margin-top: 8px; }
 .ex.active { outline: 2px solid var(--accent); outline-offset: 1px; background: #26313f; }
 #ed-alt { scroll-margin: 80px; }
 .set-reps { display: inline-flex; gap: 4px; flex-wrap: wrap; }
