@@ -1047,8 +1047,40 @@ def _step_for(equipment: str) -> float:
     return 2.5
 
 
+PROGRESSION_SESSIONS = int(os.getenv("PROGRESSION_SESSIONS", "2"))
+
+
+def _load_streak_sync(user_id: int, slug: str, weight: float, min_reps: int) -> int:
+    """Сколько тренировок подряд упражнение сделано на том же весе и не ниже повторов."""
+    conn = _open()
+    try:
+        rows = conn.execute(
+            """SELECT w.id AS wid, MAX(ws.weight) AS weight, MAX(ws.reps) AS reps
+               FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
+               WHERE w.user_id = ? AND ws.slug = ?
+               GROUP BY w.id ORDER BY w.id DESC LIMIT 10""",
+            (user_id, slug),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    streak = 0
+    for row in rows:
+        reps = int(row["reps"] or 0)
+        if reps < min_reps:
+            break
+        if weight > 0 and abs(float(row["weight"] or 0) - weight) > 0.01:
+            break
+        streak += 1
+    return streak
+
+
+async def load_streak(user_id: int, slug: str, weight: float, min_reps: int) -> int:
+    return await asyncio.to_thread(_load_streak_sync, user_id, slug, weight, min_reps)
+
+
 def next_plan(goal: str, equipment: str, sets: Sequence[sqlite3.Row],
-              allow_increase: bool = True) -> dict:
+              allow_increase: bool = True, sessions: int = 0) -> dict:
     """Вес и повторения на следующую тренировку (для подстановки в план).
 
     allow_increase=False — не повышаем вес: так бывает после разгрузочной
@@ -1061,20 +1093,24 @@ def next_plan(goal: str, equipment: str, sets: Sequence[sqlite3.Row],
     weight = float(sets[-1]["weight"])
     best = max(int(s["reps"]) for s in sets)
     bodyweight = weight <= 0 or "свой вес" in (equipment or "").lower()
+    ready = allow_increase and sessions >= PROGRESSION_SESSIONS
 
     if bodyweight:
-        if not allow_increase:
+        if not ready:
             return {"weight": 0.0, "reps": best, "bodyweight": True}
         return {"weight": 0.0, "reps": best + 1, "bodyweight": True}
-    if best >= top and allow_increase:
+    if best >= top and ready:
         return {"weight": weight + _step_for(equipment), "reps": top, "bodyweight": False}
     if not allow_increase:
         return {"weight": weight, "reps": max(best, top - 2), "bodyweight": False}
+    if best >= top:
+        # Верхняя граница взята, но рано повышать вес: закрепляем на том же
+        return {"weight": weight, "reps": top, "bodyweight": False}
     return {"weight": weight, "reps": best + 1, "bodyweight": False}
 
 
 def next_advice(goal: str, equipment: str, sets: Sequence[sqlite3.Row],
-                allow_increase: bool = True) -> str:
+                allow_increase: bool = True, sessions: int = 0) -> str:
     """Что делать на следующей тренировке с этим упражнением."""
     if not sets:
         return "первый раз — подберите вес так, чтобы оставалось 1–2 повторения в запасе"
@@ -1083,6 +1119,7 @@ def next_advice(goal: str, equipment: str, sets: Sequence[sqlite3.Row],
     weight = float(sets[-1]["weight"])
     best = max(int(s["reps"]) for s in sets)
     bodyweight = weight <= 0 or "свой вес" in (equipment or "").lower()
+    ready = allow_increase and sessions >= PROGRESSION_SESSIONS
 
     if not allow_increase:
         if bodyweight:
@@ -1090,11 +1127,16 @@ def next_advice(goal: str, equipment: str, sets: Sequence[sqlite3.Row],
         return f"{weight:g} кг, закрепите результат"
 
     if bodyweight:
-        if best >= top:
+        if best >= top and ready:
             return f"{best + 1} повторений (вес тела)"
-        return f"{best + 1} повторений, добавьте подход"
+        return f"{best} повторений (вес тела), закрепите результат"
 
     if best >= top:
+        if not ready:
+            left = max(0, PROGRESSION_SESSIONS - sessions)
+            word = "тренировку" if left == 1 else ("тренировки" if 2 <= left <= 4 else "тренировок")
+            return (f"{weight:g} кг, закрепите вес ещё {left} {word} — "
+                    "тело адаптируется не сразу")
         step = _step_for(equipment)
         return f"{weight + step:g} кг ({weight:g} → {weight + step:g})"
     return f"{weight:g} кг, повторите {best + 1}+ повторений"

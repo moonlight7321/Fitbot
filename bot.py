@@ -1083,8 +1083,14 @@ async def _plan_weights(user_id: int, profile: "profiles.Profile", plan, week=No
                 rule_sets = [{"weight": last_weight, "reps": min(top, best + 1)}]
             elif feel == "hard":
                 allow_group = False
+            sessions = await progress.load_streak(
+                user_id, slug, last_weight, top if last_weight > 0 else best
+            )
+            if feel == "easy":
+                sessions = max(sessions, progress.PROGRESSION_SESSIONS)
             step = progress.next_plan(
-                profile.goal, slot.exercise.equipment, rule_sets, allow_increase=allow_group
+                profile.goal, slot.exercise.equipment, rule_sets,
+                allow_increase=allow_group, sessions=sessions,
             )
             weight = step["weight"]
             # две неудачи именно по весу — временно снижаем нагрузку

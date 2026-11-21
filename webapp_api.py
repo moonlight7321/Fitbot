@@ -283,9 +283,15 @@ async def api_overview(request: web.Request) -> web.Response:
                         rule_sets = [{"weight": last_weight, "reps": min(top, best + 1)}]
                     elif feel == "hard":
                         allow_group = False
+                    sessions = await progress.load_streak(
+                        user_id, slot.exercise.slug, last_weight,
+                        top if last_weight > 0 else best,
+                    )
+                    if feel == "easy":
+                        sessions = max(sessions, progress.PROGRESSION_SESSIONS)
                     step = progress.next_plan(
                         profile.goal, slot.exercise.equipment, rule_sets,
-                        allow_increase=allow_group,
+                        allow_increase=allow_group, sessions=sessions,
                     )
                     weights[slug] = {
                         "label": planner.format_weight(step["weight"], slot.exercise.equipment),
@@ -957,14 +963,21 @@ async def api_workout_complete(request: web.Request) -> web.Response:
             count = max(2, count - 1)
         sets_history = await progress.last_sets(user_id, slot.exercise.slug)
         if sets_history:
+            last_weight = float(sets_history[-1]["weight"])
+            best = max(int(x["reps"]) for x in sets_history)
+            sessions = await progress.load_streak(
+                user_id, slot.exercise.slug, last_weight,
+                progress._top_reps(profile.goal) if last_weight > 0 else best,
+            )
             step = progress.next_plan(
                 profile.goal, slot.exercise.equipment, sets_history,
                 allow_increase=allow and slot.exercise.group not in pain,
+                sessions=sessions,
             )
             weight = step["weight"]
         else:
             weight = planner.start_weight(profile.weight, slot.exercise)
-        reps = progress._top_reps(profile.goal)
+        reps = planner._top_reps(str(slot.reps))
         for _ in range(count):
             records.append(progress.SetRecord(slot.exercise.slug, weight, reps, estimated=True))
 
@@ -1035,10 +1048,17 @@ async def api_workout_add(request: web.Request) -> web.Response:
     for slug in touched:
         ex = exercises.by_slug(slug)
         sets = await progress.last_sets(user_id, slug)
+        last_weight = float(sets[-1]["weight"]) if sets else 0.0
+        best = max(int(x["reps"]) for x in sets) if sets else 0
+        sessions = await progress.load_streak(
+            user_id, slug, last_weight,
+            progress._top_reps(profile.goal) if last_weight > 0 else best,
+        )
         advice.append({
             "name": ex.name_ru if ex else slug,
             "text": progress.next_advice(
-                profile.goal, ex.equipment if ex else "", sets, allow_increase=allow_increase
+                profile.goal, ex.equipment if ex else "", sets,
+                allow_increase=allow_increase, sessions=sessions,
             ),
         })
 
