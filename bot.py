@@ -336,7 +336,7 @@ async def generate_content(topic: str, hint: str = "", category: str = "") -> Ge
     # --- Проверка и картинка идут параллельно: экономим время пользователя ---
     review_result, image_result = await asyncio.gather(
         ai.review_post(post),
-        fetch_image(image_prompt, settings, category),
+        fetch_image(image_prompt, settings, category, topic),
         return_exceptions=True,
     )
 

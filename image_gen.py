@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import os
 import random
@@ -151,6 +152,13 @@ IMAGE_MAX_SIDE = int(os.getenv("IMAGE_MAX_SIDE", "4096"))
 IMAGE_MIN_BYTES = int(os.getenv("IMAGE_MIN_BYTES", "10000"))
 IMAGE_MIN_STD = float(os.getenv("IMAGE_MIN_STD", "5"))
 
+# Смысловая проверка картинки моделью: искажения, текст, несоответствие теме
+IMAGE_VISION = (os.getenv("IMAGE_VISION", "true") or "").strip().lower() in {
+    "1", "true", "yes", "y", "on",
+}
+VISION_MODEL = os.getenv("GIGACHAT_VISION_MODEL", "GigaChat-2-Max")
+VISION_TIMEOUT = float(os.getenv("GIGACHAT_VISION_TIMEOUT", "60"))
+
 
 def validate_image(data: bytes) -> Tuple[bool, str]:
     """Возвращает (годится ли картинка, причина отказа)."""
@@ -245,6 +253,63 @@ def build_prompt(base: str, category: str | None = None) -> str:
     return prompt
 
 
+VISION_PROMPT = (
+    "Ты проверяешь изображение для поста в канале о спорте и питании.\n"
+    "Тема поста: {topic}\n\n"
+    "Ответь строго JSON без пояснений: {{\"ok\": true, \"reason\": \"\"}} "
+    "или {{\"ok\": false, \"reason\": \"коротко почему\"}}.\n"
+    "Плохо, если: искажённые лица, руки, пальцы или тело; нечитаемый или битый текст; "
+    "бессмысленные артефакты; пугающие или медицинские сцены; картинка не соответствует теме. "
+    "Если не уверен — считай, что ok: true."
+)
+
+
+def _vision_check_sync(data: bytes, topic: str) -> Tuple[bool, str]:
+    with GigaChat(
+        credentials=AUTH_KEY,
+        model=VISION_MODEL,
+        scope=SCOPE,
+        timeout=VISION_TIMEOUT,
+        max_retries=0,
+        verify_ssl_certs=False,
+    ) as gc:
+        uploaded = gc.upload_file(io.BytesIO(data), purpose="general")
+        file_id = getattr(uploaded, "id_", None) or getattr(uploaded, "id", "")
+        response = gc.chat({
+            "model": VISION_MODEL,
+            "messages": [{
+                "role": "user",
+                "content": VISION_PROMPT.format(topic=(topic or "спорт и питание")[:200]),
+                "attachments": [file_id],
+            }],
+            "temperature": 0.1,
+        })
+        answer = (response.choices[0].message.content or "").strip()
+
+    start, end = answer.find("{"), answer.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            verdict = json.loads(answer[start:end + 1])
+            return bool(verdict.get("ok", True)), str(verdict.get("reason", ""))[:200]
+        except ValueError:
+            pass
+    lowered = answer.lower()
+    if '"ok": false' in lowered or "'ok': false" in lowered:
+        return False, answer[:200]
+    return True, ""
+
+
+async def check_image_semantics(data: bytes, topic: str = "") -> Tuple[bool, str]:
+    """Проверка картинки моделью. Любая ошибка проверки не блокирует публикацию."""
+    if not IMAGE_VISION or not AUTH_KEY:
+        return True, ""
+    try:
+        return await asyncio.to_thread(_vision_check_sync, data, topic)
+    except Exception as exc:  # noqa: BLE001 — сеть, модель без vision, лимиты
+        logger.warning("Смысловая проверка картинки недоступна: %s", exc)
+        return True, ""
+
+
 def _extract_file_id(text: str) -> str:
     match = re.search(r'<img src="([^"]+)"', text or "")
     if not match:
@@ -273,28 +338,37 @@ def _generate_sync(prompt: str) -> bytes:
         return image.content
 
 
-async def fetch_image(prompt: str, settings, category: str | None = None) -> Optional[bytes]:
+async def fetch_image(prompt: str, settings, category: str | None = None,
+                      topic: str = "") -> Optional[bytes]:
     """Возвращает байты картинки или None — пост уйдёт и без изображения."""
     text = build_prompt(prompt, category)
     if not AUTH_KEY:
         logger.error("Не задан GIGACHAT_AUTH_KEY в .env")
         return None
     logger.info("Промт картинки: %s", text)
-    try:
-        data = await asyncio.to_thread(_generate_sync, text)
-        logger.info("Картинка получена: %s КБ", len(data) // 1024)
+
+    for attempt in (1, 2):
+        current = text if attempt == 1 else (text + ", чёткая композиция, без артефактов")[:MAX_PROMPT_CHARS]
+        try:
+            data = await asyncio.to_thread(_generate_sync, current)
+        except Exception as exc:  # noqa: BLE001 — сеть, API, формат ответа
+            logger.warning("Картинка не получена (попытка %s): %s", attempt, exc)
+            continue
+
+        logger.info("Картинка получена: %s КБ (попытка %s)", len(data) // 1024, attempt)
 
         if IMAGE_VALIDATE:
             ok, reason = validate_image(data)
             if not ok:
-                logger.warning("Картинка не прошла проверку: %s — пробую ещё раз", reason)
-                retry_prompt = (text + ", чёткая композиция, без артефактов")[:MAX_PROMPT_CHARS]
-                data = await asyncio.to_thread(_generate_sync, retry_prompt)
-                ok, reason = validate_image(data)
-                if not ok:
-                    logger.error("Повторная генерация тоже не прошла проверку: %s", reason)
-                    return None
+                logger.warning("Техническая проверка не прошла: %s", reason)
+                continue
+
+        ok, reason = await check_image_semantics(data, topic)
+        if not ok:
+            logger.warning("Смысловая проверка не прошла: %s", reason)
+            continue
+
         return data
-    except Exception as exc:  # noqa: BLE001 — сеть, API, формат ответа
-        logger.warning("Картинка не получена: %s", exc)
-        return None
+
+    logger.error("Картинка не прошла проверки после двух попыток — публикую без неё")
+    return None
