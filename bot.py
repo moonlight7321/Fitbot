@@ -256,7 +256,7 @@ def _load_post_history() -> List[Dict]:
 def _save_post_history(items: List[Dict]) -> None:
     try:
         with open(_post_history_path(), "w", encoding="utf-8") as handle:
-            json.dump(items[-40:], handle, ensure_ascii=False)
+            json.dump(items[-150:], handle, ensure_ascii=False)
     except OSError:
         logger.warning("Не удалось сохранить историю постов")
 
@@ -275,14 +275,20 @@ def _similarity(first: str, second: str) -> float:
     return len(left & right) / len(left | right)
 
 
-async def generate_content(topic: str, hint: str = "", category: str = "") -> GeneratedContent:
+async def generate_content(topic: str, hint: str = "", category: str = "",
+                           angle: str = "", repeat: int = 0) -> GeneratedContent:
     """Полный цикл: генерация → проверка объёма → проверка → исправление → картинка."""
     settings, ai = ctx.settings, ctx.ai
     notes: List[str] = []
 
     history = _load_post_history()
     recent_posts = [item.get("post", "") for item in history[-5:] if item.get("post")]
-    raw = await ai.generate_post(topic, hint, recent_posts)
+    same_topic = [item.get("post", "") for item in history if item.get("topic") == topic]
+    repeat = len(same_topic)
+    if repeat > 0 and not angle:
+        angle = topics.ANGLES[repeat % len(topics.ANGLES)]
+    avoid = [part[:220] for part in same_topic[-2:] if part] + recent_posts
+    raw = await ai.generate_post(topic, hint, avoid, angle, repeat)
     sections = parse_sections(raw)
     post = clean_post(sections["post"])
     if not post:
@@ -379,6 +385,16 @@ async def generate_content(topic: str, hint: str = "", category: str = "") -> Ge
     final_length = check_length(post, settings.post_min_chars, settings.post_max_chars)
     if final_length:
         notes.append(f"Итоговая длина: {len(post)} символов ({final_length}).")
+
+    # Повтор темы: читатель должен видеть, что это другой разбор, а не тот же пост
+    if repeat > 0:
+        lowered = post.lower()
+        if not any(marker in lowered for marker in ("продолжаем", "другой угол", "часть 2")):
+            marked = "Продолжаем тему. " + post
+            if len(marked) > settings.post_max_chars:
+                marked = _fit_length(marked, settings.post_max_chars)
+            post = marked
+            notes.append("Добавлена пометка, что это повторное обращение к теме.")
 
     history.append({
         "topic": topic,
@@ -589,7 +605,10 @@ async def autopost(bot: Bot) -> None:
     item = ctx.rotation.next_topic()
     topic = item["topic"]
     try:
-        content = await generate_content(topic, topics.hint_for(item), item["category"])
+        content = await generate_content(
+            topic, topics.hint_for(item), item["category"],
+            item.get("angle", ""), int(item.get("repeat", 0)),
+        )
     except AIError as exc:
         logger.error("Автопостинг: генерация не удалась — %s", exc)
         return
@@ -784,7 +803,10 @@ async def cb_sub_menu(callback: CallbackQuery) -> None:
 @router.message(Command("post"))
 async def cmd_post(message: Message) -> None:
     item = ctx.rotation.next_topic()
-    await _generate_and_send(message, item["topic"], topics.hint_for(item), item["category"])
+    await _generate_and_send(
+        message, item["topic"], topics.hint_for(item), item["category"],
+        item.get("angle", ""), int(item.get("repeat", 0)),
+    )
 
 
 @router.message(Command("topic"))
@@ -802,12 +824,13 @@ async def cmd_topic(message: Message, command: CommandObject) -> None:
     await _generate_and_send(message, topic, hint)
 
 
-async def _generate_and_send(message: Message, topic: str, hint: str = "", category: str = "") -> None:
+async def _generate_and_send(message: Message, topic: str, hint: str = "", category: str = "",
+                            angle: str = "", repeat: int = 0) -> None:
     """Общая обёртка для /post и /topic: статус, генерация, отправка, ошибки."""
     status = await message.answer(f"⏳ Генерирую пост: <i>{html.escape(topic)}</i>")
 
     try:
-        content = await generate_content(topic, hint, category)
+        content = await generate_content(topic, hint, category, angle, repeat)
     except AIError as exc:
         logger.warning("Генерация не удалась: %s", exc)
         await _safe_edit(status, f"😔 Не получилось: {html.escape(str(exc))}\nПопробуйте ещё раз через минуту.")

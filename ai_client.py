@@ -206,13 +206,21 @@ class DeepSeekClient:
             raise AIError("DeepSeek вернул пустой ответ")
         return content
 
-    async def generate_post(self, topic: str, hint: str = "", avoid: list[str] | None = None) -> str:
+    async def generate_post(self, topic: str, hint: str = "", avoid: list[str] | None = None,
+                            angle: str = "", repeat: int = 0) -> str:
         """Первый запрос: пост + промт картинки + самопроверка (три блока)."""
         safe_topic = (topic or "").strip()[:400] or "Свободная тема про спорт и питание"
         extra = (hint or "").strip()[:500]
         user_text = f"Тема поста: {safe_topic}\n"
         if extra:
             user_text += f"Дополнительные требования: {extra}\n"
+        if repeat > 0:
+            user_text += (
+                f"Эта тема уже была в канале (повтор №{repeat + 1}). Не повторяй прошлый пост: "
+                f"ни заголовок, ни примеры, ни структуру. Возьми другой ракурс: {angle}. "
+                "В самом начале текста дай понять, что это другой разбор: начни заголовок "
+                "со слов «Другой угол:» или «Продолжаем тему:».\n"
+            )
         recent = [part.strip()[:220] for part in (avoid or []) if part.strip()][:5]
         if recent:
             user_text += (

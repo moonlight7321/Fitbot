@@ -19,6 +19,18 @@ FORMATS: List[str] = [
     "микро-совет на 1 минуту",
 ]
 
+# Ракурсы для повторного обращения к теме: второй раз — другой разбор
+ANGLES: List[str] = [
+    "объяснение с нуля: что это и почему так",
+    "частые ошибки и как их не допускать",
+    "что делать уже сегодня: конкретные шаги",
+    "разбор мифа вокруг темы",
+    "профилактика и как не довести до проблемы",
+    "когда пора к врачу или специалисту",
+    "упражнения и техника: что и как делать",
+    "как встроить это в повседневную жизнь",
+]
+
 CATEGORY_HINTS: Dict[str, str] = {
     "тренировка": "Дай конкретное упражнение или короткую схему с подходами и повторениями, "
                   "укажи вариант для новичка и для опытного.",
@@ -167,6 +179,7 @@ class Rotation:
         self._recent_categories: list = []
         self._recent_topics: list = []
         self._recent_formats: list = []
+        self._topic_counts: Dict[str, int] = {}
         self._state_path = state_path
         self._load()
 
@@ -186,6 +199,10 @@ class Rotation:
             self._recent_categories = list(data.get("recent_categories") or [])
             self._recent_topics = list(data.get("recent_topics") or [])
             self._recent_formats = list(data.get("recent_formats") or [])
+            self._topic_counts = {
+                str(key): int(value)
+                for key, value in (data.get("topic_counts") or {}).items()
+            }
         except (OSError, ValueError, TypeError):
             # нет файла или он битый — начинаем с чистого состояния
             pass
@@ -205,6 +222,7 @@ class Rotation:
                     "recent_categories": self._recent_categories,
                     "recent_topics": self._recent_topics,
                     "recent_formats": self._recent_formats,
+                    "topic_counts": self._topic_counts,
                 }, ensure_ascii=False),
                 encoding="utf-8",
             )
@@ -243,11 +261,21 @@ class Rotation:
                 fmt = candidate
                 break
 
+        repeat_count = self._topic_counts.get(topic, 0)
+        angle = ANGLES[repeat_count % len(ANGLES)]
+        self._topic_counts[topic] = repeat_count + 1
+
         self._remember(self._recent_categories, category, WINDOW_CATEGORIES)
         self._remember(self._recent_topics, topic, WINDOW_TOPICS)
         self._remember(self._recent_formats, fmt, WINDOW_FORMATS)
         self._save()
-        return {"topic": topic, "category": category, "format": fmt}
+        return {
+            "topic": topic,
+            "category": category,
+            "format": fmt,
+            "angle": angle,
+            "repeat": repeat_count,
+        }
 
     def random_format(self) -> str:
         return random.choice(FORMATS)
