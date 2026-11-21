@@ -738,9 +738,9 @@ async def _progress_payload(user_id: int, period: int = 30) -> dict:
             ],
         })
 
-    # Полные ряды по упражнениям — для графика с выбором упражнения
+    # Ряды по упражнениям — только те, что реально выполнялись в тренировках
     series_all = []
-    for item in items[:20]:
+    for item in items:
         points = await progress.series(user_id, item["slug"], max(7, period))
         if not points:
             continue
@@ -749,11 +749,13 @@ async def _progress_payload(user_id: int, period: int = 30) -> dict:
             "slug": item["slug"],
             "name": item["name"],
             "unit": exercise.unit if exercise else "раз",
+            "last_date": item["last_date"],
             "points": [
                 {"date": p["done_on"], "weight": float(p["weight"]), "reps": int(p["reps"])}
                 for p in points
             ],
         })
+    series_all.sort(key=lambda row: row["name"])
 
     weak = await progress.weak_groups(user_id)
     breakdown = await progress.breakdown(user_id)
