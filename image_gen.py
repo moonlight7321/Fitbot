@@ -8,11 +8,18 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
 import random
 import re
 from typing import List, Optional, Tuple
+
+try:
+    from PIL import Image, ImageStat
+except ImportError:  # Pillow не установился — бот должен работать и без проверки
+    Image = None
+    ImageStat = None
 
 from dotenv import load_dotenv
 
@@ -134,6 +141,43 @@ FORMATS: List[str] = [
 
 NO_TEXT = "без текста, без надписей, без логотипов, без мультяшности"
 
+# Проверка результата генерации: битый файл, слишком маленькая картинка,
+# однотонная заглушка — такую в канал не публикуем.
+IMAGE_VALIDATE = (os.getenv("IMAGE_VALIDATE", "true") or "").strip().lower() in {
+    "1", "true", "yes", "y", "on",
+}
+IMAGE_MIN_SIDE = int(os.getenv("IMAGE_MIN_SIDE", "512"))
+IMAGE_MAX_SIDE = int(os.getenv("IMAGE_MAX_SIDE", "4096"))
+IMAGE_MIN_BYTES = int(os.getenv("IMAGE_MIN_BYTES", "10000"))
+IMAGE_MIN_STD = float(os.getenv("IMAGE_MIN_STD", "5"))
+
+
+def validate_image(data: bytes) -> Tuple[bool, str]:
+    """Возвращает (годится ли картинка, причина отказа)."""
+    if Image is None or ImageStat is None:
+        return True, "Pillow не установлен — проверка пропущена"
+    if not data:
+        return False, "пустой файл"
+    if len(data) < IMAGE_MIN_BYTES:
+        return False, f"слишком маленький файл ({len(data)} байт)"
+    try:
+        image = Image.open(io.BytesIO(data))
+        image.load()
+    except Exception as exc:  # noqa: BLE001 — битый файл от API
+        return False, f"не читается как изображение: {exc}"
+
+    width, height = image.size
+    if min(width, height) < IMAGE_MIN_SIDE:
+        return False, f"маленькое разрешение {width}×{height}"
+    if max(width, height) > IMAGE_MAX_SIDE:
+        return False, f"слишком большое разрешение {width}×{height}"
+
+    gray = image.convert("L").resize((64, 64))
+    deviation = ImageStat.Stat(gray).stddev[0]
+    if deviation < IMAGE_MIN_STD:
+        return False, f"однотонная картинка (разброс {deviation:.1f})"
+    return True, ""
+
 MAX_PROMPT_CHARS = 400   # длиннее Kandinsky начинает терять детали
 MAX_BASE_CHARS = 200
 
@@ -239,6 +283,17 @@ async def fetch_image(prompt: str, settings, category: str | None = None) -> Opt
     try:
         data = await asyncio.to_thread(_generate_sync, text)
         logger.info("Картинка получена: %s КБ", len(data) // 1024)
+
+        if IMAGE_VALIDATE:
+            ok, reason = validate_image(data)
+            if not ok:
+                logger.warning("Картинка не прошла проверку: %s — пробую ещё раз", reason)
+                retry_prompt = (text + ", чёткая композиция, без артефактов")[:MAX_PROMPT_CHARS]
+                data = await asyncio.to_thread(_generate_sync, retry_prompt)
+                ok, reason = validate_image(data)
+                if not ok:
+                    logger.error("Повторная генерация тоже не прошла проверку: %s", reason)
+                    return None
         return data
     except Exception as exc:  # noqa: BLE001 — сеть, API, формат ответа
         logger.warning("Картинка не получена: %s", exc)
