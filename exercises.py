@@ -43,12 +43,12 @@ class Exercise:
     mistakes: List[str]
     safety: str
     free: bool
+    unit: str = "раз"   # «раз» — повторения, «сек» — удержание
 
     @property
     def timed(self) -> bool:
-        """Упражнение на удержание: измеряется в секундах, а не повторениях."""
-        # «Супермен» — динамика: поднял, задержал на 2 с, опустил. Это повторения.
-        return self.slug in {"Plank", "Side_Bridge"} or "Plank" in self.slug
+        """Удержание измеряется в секундах — это задано в данных упражнения."""
+        return self.unit == "сек"
 
     def images(self) -> List[Path]:
         folder = MEDIA_DIR / self.slug
@@ -89,6 +89,7 @@ def _load() -> List[Exercise]:
                     mistakes=list(item.get("mistakes", [])),
                     safety=item.get("safety", ""),
                     free=bool(item.get("free", False)),
+                    unit=item.get("unit", "раз"),
                 )
             )
         except KeyError as exc:

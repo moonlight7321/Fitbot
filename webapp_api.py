@@ -314,7 +314,7 @@ async def api_overview(request: web.Request) -> web.Response:
                              "sets": _adjusted_sets(s, week["deload"], pain),
                              "reps": (weights.get(s.exercise.slug) or {}).get("reps") or s.reps,
                              "timed": s.exercise.timed,
-                             "unit": "сек" if s.exercise.timed else "раз",
+                             "unit": s.exercise.unit,
                              "scheme": planner.sets_phrase(
                                  _adjusted_sets(s, week["deload"], pain),
                                  str((weights.get(s.exercise.slug) or {}).get("reps") or s.reps),
