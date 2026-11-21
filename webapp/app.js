@@ -513,8 +513,8 @@ function sparkline(series) {
 
   return ''
     + '<div class="chart">'
-    + '<div class="muted">' + esc(series.name) + ' · ' + min + ' → ' + max + ' кг'
-    + ' · точек: ' + points.length + '</div>'
+    + '<div class="muted">' + esc(series.name) + ' · ' + min + ' → ' + max
+    + ' ' + esc(series.unit || "кг") + ' · точек: ' + points.length + '</div>'
     + '<svg viewBox="0 0 ' + w + ' ' + h + '">'
     + grid
     + '<line x1="' + padL + '" y1="' + (h - padB) + '" x2="' + (w - padR) + '" y2="' + (h - padB)
@@ -756,9 +756,10 @@ function renderProgressTab(data) {
   let exerciseChart = '<p class="muted">Нет данных: запишите тренировку с весами или повторениями.</p>';
   if (selectedSeries) {
     const hasWeight = selectedSeries.points.some(point => Number(point.weight) > 0);
-    const unit = hasWeight ? "кг" : (selectedSeries.unit === "сек" ? "сек" : "повторения");
+    const unit = hasWeight ? "кг" : (selectedSeries.unit === "сек" ? "сек" : "повторений");
     exerciseChart = sparkline({
-      name: selectedSeries.name + ", " + unit,
+      name: selectedSeries.name + (hasWeight ? ", кг" : (selectedSeries.unit === "сек" ? ", сек" : ", повторения")),
+      unit: unit,
       points: selectedSeries.points.map(point => ({
         date: point.date,
         weight: hasWeight ? Number(point.weight) : Number(point.reps),
