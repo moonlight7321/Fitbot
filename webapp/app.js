@@ -471,10 +471,33 @@ function sparkline(series) {
   const span = max - min || 1;
   const step = points.length > 1 ? (w - padL - padR) / (points.length - 1) : 0;
   const y = v => h - padB - ((v - min) / span) * (h - padT - padB);
+  const info = Array.isArray(series.info) ? series.info : [];
+  const second = Array.isArray(series.second) ? series.second : [];
+  const secondMin = second.length ? Math.min.apply(null, second) : 0;
+  const secondMax = second.length ? Math.max.apply(null, second) : 0;
+  const secondSpan = secondMax - secondMin || 1;
+  const y2 = value => h - padB - ((value - secondMin) / secondSpan) * (h - padT - padB);
+
   const dots = points.map((p, i) => {
     const cx = padL + i * step, cy = y(p.weight);
-    return '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="2.6" fill="#4f8cff" />';
+    return '<circle class="point-dot" cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1)
+      + '" r="3.2" fill="#4f8cff" data-info="' + esc(info[i] || "") + '" />';
   }).join('');
+
+  let secondLine = '';
+  if (second.length > 1) {
+    const secondCoords = second.map((value, i) =>
+      (padL + i * step).toFixed(1) + ',' + y2(value).toFixed(1)).join(' ');
+    const secondDots = second.map((value, i) =>
+      '<circle cx="' + (padL + i * step).toFixed(1) + '" cy="' + y2(value).toFixed(1)
+      + '" r="2.4" fill="#f0a94c" pointer-events="none" />').join('');
+    secondLine = '<polyline points="' + secondCoords + '" fill="none" stroke="#f0a94c" '
+      + 'stroke-width="2" />' + secondDots
+      + '<text x="' + (w - 2) + '" y="' + (padT + 8) + '" font-size="9" fill="#f0a94c" text-anchor="end">'
+      + secondMax + ' повт.</text>'
+      + '<text x="' + (w - 2) + '" y="' + (h - padB - 2) + '" font-size="9" fill="#f0a94c" text-anchor="end">'
+      + secondMin + ' повт.</text>';
+  }
   const coords = points.map((p, i) =>
     (padL + i * step).toFixed(1) + ',' + y(p.weight).toFixed(1)
   ).join(' ');
@@ -517,6 +540,14 @@ function sparkline(series) {
     + ' ' + esc(series.unit || "кг")
     + (series.reps ? ' · повторения ' + series.reps[0] + ' → ' + series.reps[1] : '')
     + ' · точек: ' + points.length + '</div>'
+    + (second.length > 1
+        ? '<div class="muted" style="margin-top:4px">'
+          + '<span style="color:#4f8cff">● вес</span> · '
+          + '<span style="color:#f0a94c">● повторения</span></div>'
+        : '')
+    + (info.length
+        ? '<div class="point-info muted" data-point-info>Нажмите на точку, чтобы увидеть вес и повторения</div>'
+        : '')
     + ((series.details || []).length
         ? '<div class="chart-details">' + series.details.map(line =>
             '<div class="muted">' + esc(line) + '</div>').join('') + '</div>'
@@ -528,6 +559,7 @@ function sparkline(series) {
     + baselineLine
     + '<polyline points="' + coords + '" fill="none" stroke="#4f8cff" stroke-width="2.5" />'
     + trendLine
+    + secondLine
     + dots
     + labels
     + '</svg></div>';
@@ -768,21 +800,23 @@ function renderProgressTab(data) {
       weight: hasWeight ? Number(point.weight) : Number(point.reps),
     }));
     const reps = selectedSeries.points.map(point => Number(point.reps));
+    const info = selectedSeries.points.map(point => {
+      const day = shortDate(point.date);
+      if (hasWeight) {
+        return day + ' — ' + point.weight + ' кг × ' + point.reps + ' повт.';
+      }
+      if (selectedSeries.unit === "сек") {
+        return day + ' — ' + point.reps + ' сек';
+      }
+      return day + ' — ' + point.reps + ' повторений';
+    });
     exerciseChart = sparkline({
       name: selectedSeries.name + (hasWeight ? ", кг" : (selectedSeries.unit === "сек" ? ", сек" : ", повторения")),
       unit: unit,
       points: chartPoints,
       reps: hasWeight && reps.length > 1 ? [reps[0], reps[reps.length - 1]] : null,
-      details: selectedSeries.points.map(point => {
-        const day = shortDate(point.date);
-        if (hasWeight) {
-          return day + ' — ' + point.weight + ' кг × ' + point.reps + ' повт.';
-        }
-        if (selectedSeries.unit === "сек") {
-          return day + ' — ' + point.reps + ' сек';
-        }
-        return day + ' — ' + point.reps + ' повторений';
-      }),
+      second: hasWeight && reps.length > 1 ? reps : null,
+      info: info,
     });
   }
 
@@ -1186,6 +1220,13 @@ function render() {
       state.exerciseSlug = exSelect.value;
       render();
     };
+
+    const pointInfo = document.querySelector("[data-point-info]");
+    document.querySelectorAll(".point-dot").forEach(dot => {
+      dot.onclick = () => {
+        if (pointInfo && dot.dataset.info) pointInfo.textContent = dot.dataset.info;
+      };
+    });
 
     const weightReminder = document.getElementById("weight-reminder");
     if (weightReminder) weightReminder.onchange = async () => {
