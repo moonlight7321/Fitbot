@@ -121,6 +121,12 @@ class MiniAppOnlyMiddleware(BaseMiddleware):
     """
 
     async def __call__(self, handler, event, data):
+        # Владелец проходит дальше: иначе его текст для /topic или FSM
+        # перехватывался бы этим фильтром до админского роутера.
+        owner = getattr(event, "from_user", None)
+        if owner and owner.id in ctx.settings.owner_ids:
+            return await handler(event, data)
+
         is_callback = isinstance(event, CallbackQuery) or hasattr(event, "data")
         if not is_callback:
             text = (getattr(event, "text", "") or "").strip()
