@@ -683,6 +683,27 @@ function barChart(title, points, valueKey, unit, target) {
     + '</div>';
 }
 
+function vChart(title, points, valueKey, unit, cls) {
+  if (!points.length) return '';
+  const values = points.map(p => Number(p[valueKey]) || 0);
+  if (!values.some(value => value > 0)) {
+    return '<div class="vchart ' + (cls || '') + '"><div class="muted">' + esc(title)
+      + '</div><p class="muted">Нет данных за выбранный период.</p></div>';
+  }
+  const max = Math.max.apply(null, values) || 1;
+  const bars = points.map(point => {
+    const value = Number(point[valueKey]) || 0;
+    const height = value > 0 ? Math.max(6, Math.round((value / max) * 80)) : 0;
+    return '<div class="vcol">'
+      + '<div class="vval">' + (value ? Math.round(value) : '') + '</div>'
+      + '<div class="vbar" style="height:' + height + 'px"></div>'
+      + '<div class="vlabel">' + esc(point.label) + '</div>'
+      + '</div>';
+  }).join('');
+  return '<div class="vchart ' + (cls || '') + '"><div class="muted">' + esc(title)
+    + '</div><div class="vbars">' + bars + '</div></div>';
+}
+
 function renderProgressTab(data) {
   if (!data.access) return paywallCard("Прогресс", data);
   const series = (data.progress && data.progress.series) || [];
@@ -699,22 +720,13 @@ function renderProgressTab(data) {
   const reminders = data.reminders || { days: [], time: "" };
   const statusNames = { done: "✅", partial: "🟡", skip: "😕", empty: "—" };
 
-  const weekItems = week => (week.days || []).map(day => ({
-    text: day.date.slice(8, 10) + '.' + day.date.slice(5, 7)
-      + ' · День ' + (day.day_index + 1)
-      + (day.title ? ' · ' + day.title : '')
-      + ' · ' + day.sets + ' подх. · ' + day.tonnage + ' кг',
-  }));
-
   const tonnage = weekly.map(w => ({
-    label: "Нед " + w.week + (w.estimated ? " *" : ""),
+    label: "Н" + w.week + (w.estimated ? "*" : ""),
     tonnage: w.tonnage,
-    items: weekItems(w),
   }));
   const workoutsBars = weekly.map(w => ({
-    label: "Нед " + w.week,
+    label: "Н" + w.week,
     workouts: w.workouts,
-    items: weekItems(w),
   }));
 
   const weeks = (history.weeks || []).map(item =>
@@ -756,10 +768,8 @@ function renderProgressTab(data) {
     + '</div>'
 
     + '<details class="card" open><summary><b>📈 График тренировок</b></summary>'
-    + barChart('Тренировок за неделю', workoutsBars, 'workouts', 'шт')
-    + '<details style="margin-top:8px"><summary class="muted">📦 Тоннаж за неделю (кг × повторения)</summary>'
-    + barChart('Объём за неделю', tonnage, 'tonnage', 'кг')
-    + '</details>'
+    + vChart('Тренировок за неделю, шт', workoutsBars, 'workouts', 'шт', '')
+    + vChart('Тоннаж за неделю, кг', tonnage, 'tonnage', 'кг', 'warn')
     + (weekly.some(w => w.estimated)
         ? '<div class="muted">* часть подходов восстановлена по плану.</div>'
         : '')

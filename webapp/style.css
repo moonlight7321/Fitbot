@@ -81,6 +81,13 @@ details.bar-wrap > summary.bar-row::-webkit-details-marker { display: none; }
 .bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 6px; }
 .bar-value { text-align: right; color: var(--muted); }
 .bar-label { color: var(--muted); }
+.vchart { margin-top: 12px; }
+.vbars { display: flex; gap: 6px; align-items: flex-end; min-height: 118px; overflow-x: auto; padding-top: 6px; }
+.vcol { flex: 1 0 34px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; min-width: 34px; }
+.vval { font-size: 10px; color: var(--muted); height: 14px; }
+.vbar { width: 16px; background: var(--accent); border-radius: 4px 4px 0 0; }
+.vchart.warn .vbar { background: var(--warn); }
+.vlabel { font-size: 10px; color: var(--muted); margin-top: 4px; }
 .ex.active { outline: 2px solid var(--accent); outline-offset: 1px; background: #26313f; }
 #ed-alt { scroll-margin: 80px; }
 .set-reps { display: inline-flex; gap: 4px; flex-wrap: wrap; }
