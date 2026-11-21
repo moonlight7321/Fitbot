@@ -228,6 +228,8 @@ async def api_overview(request: web.Request) -> web.Response:
             "equipment": profile.equipment, "activity": profile.activity,
             "sex": profile.sex, "age": profile.age,
             "limitations": sorted(profile.limits),
+            "diet": profile.diet or "none",
+            "exclude": [tag for tag in (profile.exclude or "").split(",") if tag],
             "weight_reminder": bool(profile.weight_reminder),
             "created_at": (profile.created_at or "")[:10],
         }
@@ -601,6 +603,40 @@ async def api_mealplan(request: web.Request) -> web.Response:
     return web.json_response({"days": plan})
 
 
+async def api_mealplan_add(request: web.Request) -> web.Response:
+    user_id = _user_id(request)
+    assert user_id is not None
+    if not await subs.has_access(user_id):
+        return web.json_response({"error": "subscription required"}, status=403)
+
+    data = await request.json()
+    day = str(data.get("date", ""))[:10]
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        return web.json_response({"error": "bad date"}, status=400)
+
+    items = data.get("items") or []
+    if not isinstance(items, list) or not items or len(items) > 20:
+        return web.json_response({"error": "bad items"}, status=400)
+
+    added, skipped = 0, []
+    for item in items:
+        food = diary.find_food(str(item.get("name", "")))
+        if food is None:
+            skipped.append(str(item.get("name", "")))
+            continue
+        try:
+            grams = float(item.get("grams", 0))
+        except (TypeError, ValueError):
+            continue
+        if not 5 <= grams <= 1000:
+            continue
+        await diary.add(user_id, food, grams, day=day)
+        added += 1
+    return web.json_response({"added": added, "skipped": skipped})
+
+
 async def api_weight(request: web.Request) -> web.Response:
     user_id = _user_id(request)
     assert user_id is not None
@@ -720,6 +756,10 @@ async def api_profile_save(request: web.Request) -> web.Response:
         workout_time=existing.workout_time if existing else "",
         last_reminder=existing.last_reminder if existing else "",
         day_cursor=0,
+        diet=str(data.get("diet", existing.diet if existing else "none") or "none"),
+        exclude=",".join(
+            str(tag) for tag in data.get("exclude", []) if str(tag).strip()
+        ) if isinstance(data.get("exclude"), list) else (existing.exclude if existing else ""),
         weight_reminder=bool(
             data.get("weight_reminder", existing.weight_reminder if existing else False)
         ),
@@ -1175,6 +1215,7 @@ def create_app(settings: Settings) -> web.Application:
     app.router.add_post("/api/profile", api_profile_save)
     app.router.add_post("/api/trial", api_trial)
     app.router.add_get("/api/mealplan", api_mealplan)
+    app.router.add_post("/api/mealplan/add", api_mealplan_add)
     app.router.add_post("/api/weight", api_weight)
     app.router.add_post("/api/weight-reminder", api_weight_reminder)
     app.router.add_post("/api/error", api_error)

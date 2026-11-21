@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS profiles (
     workout_time TEXT DEFAULT '',
     last_reminder TEXT DEFAULT '',
     day_cursor INTEGER DEFAULT -1,
+    diet TEXT DEFAULT 'none',
+    exclude TEXT DEFAULT '',
     weight_reminder INTEGER DEFAULT 0,
     last_weight_reminder TEXT DEFAULT '',
     created_at TEXT DEFAULT '',
@@ -90,6 +92,8 @@ class Profile:
     last_reminder: str = ""
     day_cursor: int = -1
     created_at: str = ""
+    diet: str = "none"
+    exclude: str = ""
     weight_reminder: bool = False
     last_weight_reminder: str = ""
     replacements: dict = dataclass_field(default_factory=dict)
@@ -154,6 +158,8 @@ def _open() -> sqlite3.Connection:
         "workout_time": "ALTER TABLE profiles ADD COLUMN workout_time TEXT DEFAULT ''",
         "last_reminder": "ALTER TABLE profiles ADD COLUMN last_reminder TEXT DEFAULT ''",
         "day_cursor": "ALTER TABLE profiles ADD COLUMN day_cursor INTEGER DEFAULT -1",
+        "diet": "ALTER TABLE profiles ADD COLUMN diet TEXT DEFAULT 'none'",
+        "exclude": "ALTER TABLE profiles ADD COLUMN exclude TEXT DEFAULT ''",
         "weight_reminder": "ALTER TABLE profiles ADD COLUMN weight_reminder INTEGER DEFAULT 0",
         "last_weight_reminder": "ALTER TABLE profiles ADD COLUMN last_weight_reminder TEXT DEFAULT ''",
         "created_at": "ALTER TABLE profiles ADD COLUMN created_at TEXT DEFAULT ''",
@@ -215,6 +221,8 @@ def _get_sync(user_id: int) -> Optional[Profile]:
             if "day_cursor" in keys and row["day_cursor"] is not None
             else -1
         ),
+        diet=((row["diet"] if "diet" in keys else "none") or "none"),
+        exclude=((row["exclude"] if "exclude" in keys else "") or ""),
         weight_reminder=bool(int(row["weight_reminder"] or 0)) if "weight_reminder" in keys else False,
         last_weight_reminder=((row["last_weight_reminder"] if "last_weight_reminder" in keys else "") or ""),
         created_at=((row["created_at"] if "created_at" in keys else "") or ""),
@@ -230,8 +238,9 @@ def _save_sync(profile: Profile) -> None:
             INSERT INTO profiles (user_id, height, weight, experience, days, minutes,
                                   goal, equipment, limitations, sex, age, activity,
                                   workout_days, workout_time, last_reminder, day_cursor,
-                                  weight_reminder, last_weight_reminder, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  diet, exclude, weight_reminder, last_weight_reminder,
+                                  created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 height = excluded.height, weight = excluded.weight,
                 experience = excluded.experience, days = excluded.days,
@@ -240,6 +249,7 @@ def _save_sync(profile: Profile) -> None:
                 sex = excluded.sex, age = excluded.age, activity = excluded.activity,
                 workout_days = excluded.workout_days, workout_time = excluded.workout_time,
                 last_reminder = excluded.last_reminder, day_cursor = excluded.day_cursor,
+                diet = excluded.diet, exclude = excluded.exclude,
                 weight_reminder = excluded.weight_reminder,
                 last_weight_reminder = excluded.last_weight_reminder,
                 updated_at = excluded.updated_at
@@ -248,8 +258,9 @@ def _save_sync(profile: Profile) -> None:
              profile.days, profile.minutes, profile.goal, profile.equipment,
              profile.limitations, profile.sex, profile.age, profile.activity,
              profile.workout_days, profile.workout_time, profile.last_reminder,
-             profile.day_cursor, 1 if profile.weight_reminder else 0,
-             profile.last_weight_reminder, profile.created_at or _now(), _now()),
+             profile.day_cursor, profile.diet, profile.exclude,
+             1 if profile.weight_reminder else 0, profile.last_weight_reminder,
+             profile.created_at or _now(), _now()),
         )
         conn.commit()
     finally:

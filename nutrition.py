@@ -30,6 +30,32 @@ MEALS = [
 ]
 
 
+EXCLUDE_GROUPS = {
+    "fish": {"Треска", "Лосось", "Минтай", "Горбуша", "Тунец консервированный", "Скумбрия"},
+    "seafood": {"Креветки"},
+    "meat": {"Куриная грудь", "Куриное бедро", "Индейка", "Говядина", "Свинина"},
+    "dairy": {"Творог 5%", "Творог 0%", "Молоко 2.5%", "Кефир 1%", "Сыр твёрдый",
+              "Ряженка", "Сметана 15%", "Сыр творожный", "Йогурт натуральный"},
+    "eggs": {"Яйцо куриное"},
+    "nuts": {"Миндаль", "Грецкий орех", "Арахис", "Паста ореховая"},
+    "gluten": {"Хлеб цельнозерновой", "Хлеб белый", "Макароны варёные", "Булгур варёный", "Лаваш"},
+}
+
+
+def _blocked_names(profile) -> set:
+    tags = {tag.strip() for tag in (profile.exclude or "").split(",") if tag.strip()}
+    blocked = set()
+    for tag in tags:
+        blocked |= EXCLUDE_GROUPS.get(tag, set())
+    if (profile.diet or "none") == "vegetarian":
+        blocked |= EXCLUDE_GROUPS["meat"] | EXCLUDE_GROUPS["fish"] | EXCLUDE_GROUPS["seafood"]
+    return blocked
+
+
+def _allowed(name: str, blocked: set) -> bool:
+    return name not in blocked
+
+
 def _food(name: str):
     return diary.find_food(name)
 
@@ -59,14 +85,20 @@ def _grams_by_kcal(food, kcal_budget: float, low: float, high: float) -> float:
     return max(low, min(high, kcal_budget / food.kcal * 100))
 
 
-def _meal_items(rng: random.Random, kind: str, share: float, targets: Dict[str, float]) -> List[Dict]:
+def _pick(rng: random.Random, names: List[str], blocked: set) -> str:
+    allowed = [name for name in names if _allowed(name, blocked)]
+    return rng.choice(allowed) if allowed else ""
+
+
+def _meal_items(rng: random.Random, kind: str, share: float, targets: Dict[str, float],
+                blocked: set) -> List[Dict]:
     """Порции считаются от калорийного бюджета приёма, а не «на глаз»."""
     items: List[Dict] = []
     budget = targets["kcal"] * share
 
     if kind == "snack":
-        fruit = _food(rng.choice(FRUITS))
-        dairy = _food(rng.choice(DAIRY))
+        fruit = _food(_pick(rng, FRUITS, blocked))
+        dairy = _food(_pick(rng, DAIRY, blocked))
         if fruit:
             items.append(_portion(fruit, _grams_by_kcal(fruit, budget * 0.55, 80, 250)))
         if dairy:
@@ -74,15 +106,18 @@ def _meal_items(rng: random.Random, kind: str, share: float, targets: Dict[str, 
         return items
 
     # Белок — примерно 30 % калорий приёма, углеводы — 45 %, жир — 12 %
-    protein = _food(rng.choice(PROTEINS))
+    protein = _food(_pick(rng, PROTEINS, blocked))
+    if protein is None:
+        fallback = [name for name in ("Протеин", "Творог 0%", "Яйцо куриное") if _allowed(name, blocked)]
+        protein = _food(fallback[0]) if fallback else None
     if protein:
         items.append(_portion(protein, _grams_by_kcal(protein, budget * 0.30, 70, 300)))
 
-    carb = _food(rng.choice(CARBS))
+    carb = _food(_pick(rng, CARBS, blocked))
     if carb:
         items.append(_portion(carb, _grams_by_kcal(carb, budget * 0.45, 40, 400)))
 
-    fat = _food(rng.choice(FATS))
+    fat = _food(_pick(rng, FATS, blocked))
     if fat and kind in ("breakfast", "dinner"):
         items.append(_portion(fat, _grams_by_kcal(fat, budget * 0.12, 5, 40)))
 
@@ -92,7 +127,7 @@ def _meal_items(rng: random.Random, kind: str, share: float, targets: Dict[str, 
             items.append(_portion(veg, 150 if kind == "lunch" else 200))
 
     if kind == "breakfast":
-        fruit = _food(rng.choice(FRUITS))
+        fruit = _food(_pick(rng, FRUITS, blocked))
         if fruit:
             items.append(_portion(fruit, _grams_by_kcal(fruit, budget * 0.10, 50, 200)))
 
@@ -107,6 +142,7 @@ def build(profile, days: int = 7, start: date | None = None) -> List[Dict]:
         "fat": float(result.fat_g),
         "carbs": float(result.carbs_g),
     }
+    blocked = _blocked_names(profile)
     start = start or date.today()
     days = max(1, min(31, days))
 
@@ -117,7 +153,7 @@ def build(profile, days: int = 7, start: date | None = None) -> List[Dict]:
         meals = []
         total = {"kcal": 0, "protein": 0.0, "fat": 0.0, "carbs": 0.0}
         for title, share, kind in MEALS:
-            items = _meal_items(rng, kind, share, targets)
+            items = _meal_items(rng, kind, share, targets, blocked)
             meal_kcal = sum(item["kcal"] for item in items)
             for item in items:
                 total["kcal"] += item["kcal"]
@@ -127,7 +163,11 @@ def build(profile, days: int = 7, start: date | None = None) -> List[Dict]:
             meals.append({"title": title, "kcal": meal_kcal, "items": items})
 
         # Если до цели не хватает калорий — добираем хлебом в обед
-        bread = _food("Хлеб цельнозерновой")
+        bread = next(
+            (_food(name) for name in ("Хлеб цельнозерновой", "Картофель варёный", "Рис варёный")
+             if _allowed(name, blocked) and _food(name)),
+            None,
+        )
         deficit = targets["kcal"] - total["kcal"]
         if bread and deficit > 80:
             grams = min(220, max(20, deficit / bread.kcal * 100))

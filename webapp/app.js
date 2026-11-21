@@ -132,7 +132,9 @@ function saveDraft() {
     const el = document.getElementById(id);
     return el ? el.value : undefined;
   };
-  const limits = Array.from(form.querySelectorAll("input[type=checkbox]:checked"))
+  const limits = Array.from(form.querySelectorAll("[data-limit]:checked"))
+    .map(input => input.value);
+  const exclude = Array.from(form.querySelectorAll("[data-exclude]:checked"))
     .map(input => input.value);
   try {
     localStorage.setItem(DRAFT_KEY, JSON.stringify({
@@ -140,7 +142,7 @@ function saveDraft() {
       days: value("pf-days"), minutes: value("pf-min"), activity: value("pf-act"),
       sex: value("pf-sex"), age: value("pf-age"),
       height: value("pf-height"), weight: value("pf-weight"),
-      limitations: limits,
+      limitations: limits, exclude: exclude, diet: value("pf-diet"),
     }));
   } catch (e) { /* приватный режим — просто не сохраняем */ }
 }
@@ -155,8 +157,15 @@ function profileFormCard(data, opts) {
   const saveLabel = 'Сохранить и рассчитать';
   const limits = (raw.limitations || []);
   const limitBoxes = Object.keys(opt.limitations || {}).map(key =>
-    '<label class="chk"><input type="checkbox" value="' + esc(key) + '"'
+    '<label class="chk"><input type="checkbox" data-limit value="' + esc(key) + '"'
     + (limits.indexOf(key) >= 0 ? ' checked' : '') + '> ' + esc(opt.limitations[key]) + '</label>').join('');
+
+  const EXCLUDE_LABELS = { fish: "Рыба", seafood: "Морепродукты", meat: "Мясо",
+    dairy: "Молочное", eggs: "Яйца", nuts: "Орехи", gluten: "Глютен" };
+  const excluded = raw.exclude || [];
+  const excludeBoxes = Object.keys(EXCLUDE_LABELS).map(key =>
+    '<label class="chk"><input type="checkbox" data-exclude value="' + key + '"'
+    + (excluded.indexOf(key) >= 0 ? ' checked' : '') + '> ' + EXCLUDE_LABELS[key] + '</label>').join('');
 
   return ''
     + '<div class="card"><details id="profile-form"' + (isOpen ? ' open' : '') + '>'
@@ -178,6 +187,11 @@ function profileFormCard(data, opts) {
     + '<label class="field" style="flex:1">Рост, см<input id="pf-height" class="select" type="number" min="100" max="250" value="' + (raw.height || 175) + '"></label>'
     + '<label class="field" style="flex:1">Вес, кг<input id="pf-weight" class="select" type="number" min="30" max="250" value="' + (raw.weight || 70) + '"></label>'
     + '</div>'
+    + '<label class="field">Тип питания<select id="pf-diet" class="select">'
+    + '<option value="none"' + (raw.diet !== "vegetarian" ? ' selected' : '') + '>Обычное</option>'
+    + '<option value="vegetarian"' + (raw.diet === "vegetarian" ? ' selected' : '') + '>Вегетарианское</option>'
+    + '</select></label>'
+    + '<div class="muted" style="margin-top:8px">Исключить продукты:</div><div class="chips">' + excludeBoxes + '</div>'
     + '<div class="muted" style="margin-top:8px">Ограничения:</div><div class="chips">' + limitBoxes + '</div>'
     + '<label class="chk" style="margin-top:8px"><input type="checkbox" id="pf-reminder"'
     + (raw.weight_reminder ? ' checked' : '') + '> Напоминать о взвешивании раз в две недели</label>'
@@ -212,7 +226,10 @@ function bindDraft() {
 async function saveProfile() {
   const value = id => document.getElementById(id).value;
   const limits = Array.from(
-    document.querySelectorAll("#profile-form input[type=checkbox]:checked")
+    document.querySelectorAll("#profile-form [data-limit]:checked")
+  ).map(input => input.value);
+  const exclude = Array.from(
+    document.querySelectorAll("#profile-form [data-exclude]:checked")
   ).map(input => input.value);
   try {
     await api("/api/profile", {
@@ -223,6 +240,8 @@ async function saveProfile() {
         activity: value("pf-act"), sex: value("pf-sex"), age: Number(value("pf-age")),
         height: Number(value("pf-height")), weight: Number(value("pf-weight")),
         limitations: limits,
+        diet: value("pf-diet") || "none",
+        exclude: exclude,
         weight_reminder: Boolean(document.getElementById("pf-reminder") &&
                                   document.getElementById("pf-reminder").checked),
       }),
@@ -644,6 +663,8 @@ function renderMealPlan(days) {
             + item.grams + ' г · ' + item.kcal + ' ккал</div>').join('')
         + '</div>').join('')
     + '<div class="muted">Б ' + day.protein + ' · Ж ' + day.fat + ' · У ' + day.carbs + '</div>'
+    + '<button class="ghost" data-plan-add="' + esc(day.date) + '" style="margin-top:8px">'
+    + 'Добавить этот день в дневник</button>'
     + '</details>').join('');
 }
 
@@ -1029,6 +1050,28 @@ function render() {
     });
     const hidePlan = document.getElementById("mealplan-hide");
     if (hidePlan) hidePlan.onclick = () => { state.mealplan = null; render(); };
+
+    document.querySelectorAll("[data-plan-add]").forEach(btn => {
+      btn.onclick = async () => {
+        const day = (state.mealplan || []).find(item => item.date === btn.dataset.planAdd);
+        if (!day) return;
+        const items = [];
+        day.meals.forEach(meal => meal.items.forEach(item =>
+          items.push({ name: item.name, grams: item.grams })));
+        btn.disabled = true;
+        try {
+          const res = await api("/api/mealplan/add", {
+            method: "POST",
+            body: JSON.stringify({ date: day.date, items: items }),
+          });
+          toast("Добавлено продуктов: " + res.added);
+          await loadOverview();
+        } catch (e) {
+          btn.disabled = false;
+          toast(e.message || "Не удалось добавить");
+        }
+      };
+    });
 
     const foodFilter = document.getElementById("food-filter");
     if (foodFilter) foodFilter.oninput = () => {
