@@ -18,13 +18,43 @@ from datetime import datetime, timedelta, timezone
 
 import dates
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path(os.getenv("DB_PATH", "fitbot.db"))
 ORDER_TTL_MINUTES = int(os.getenv("ORDER_TTL_MINUTES", "60"))
 PRICE_RUB = float(os.getenv("SUBSCRIPTION_PRICE_RUB", "349").replace(",", "."))
+PRICE_3M_RUB = float(os.getenv("SUBSCRIPTION_PRICE_3M", "899").replace(",", "."))
+PRICE_1Y_RUB = float(os.getenv("SUBSCRIPTION_PRICE_1Y", "2990").replace(",", "."))
+
+
+@dataclass(frozen=True)
+class Plan:
+    id: str
+    days: int
+    price: float
+    label: str
+
+
+PLANS = (
+    Plan("1m", 30, PRICE_RUB, "1 месяц"),
+    Plan("3m", 90, PRICE_3M_RUB, "3 месяца"),
+    Plan("1y", 365, PRICE_1Y_RUB, "1 год"),
+)
+
+
+def final_price(price: float, discount: int = 0) -> float:
+    """Цена со скидкой, округлённая вверх до рубля: 174.5 → 175."""
+    percent = max(0, min(90, discount))
+    return float(-(-(price * (100 - percent)) // 100))
+
+
+def get_plan(plan_id: str) -> Plan:
+    for plan in PLANS:
+        if plan.id == plan_id:
+            return plan
+    return PLANS[0]
 
 PAYMENT_MODE = (os.getenv("PAYMENT_MODE", "qr") or "qr").strip().lower()
 PAYMENT_LINK = os.getenv("PAYMENT_LINK", "").strip()
@@ -59,6 +89,9 @@ CREATE TABLE IF NOT EXISTS orders (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL,
     amount      REAL NOT NULL,
+    base_amount REAL,
+    discount    INTEGER DEFAULT 0,
+    coupon      TEXT DEFAULT '',
     days        INTEGER NOT NULL,
     status      TEXT NOT NULL,
     created_at  TEXT NOT NULL,
@@ -97,6 +130,9 @@ class Order:
     created_at: datetime
     expires_at: datetime
     paid_at: Optional[datetime] = None
+    base_amount: float = 0.0
+    discount: int = 0
+    coupon: str = ""
 
     @property
     def short(self) -> str:
@@ -134,6 +170,18 @@ def _open() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(orders)").fetchall()}
+    added = False
+    for name, sql in (
+        ("base_amount", "ALTER TABLE orders ADD COLUMN base_amount REAL"),
+        ("discount", "ALTER TABLE orders ADD COLUMN discount INTEGER DEFAULT 0"),
+        ("coupon", "ALTER TABLE orders ADD COLUMN coupon TEXT DEFAULT ''"),
+    ):
+        if name not in columns:
+            conn.execute(sql)
+            added = True
+    if added:
+        conn.commit()
     return conn
 
 
@@ -144,6 +192,9 @@ def _row_to_order(row) -> Order:
         amount=row["amount"],
         days=row["days"],
         status=row["status"],
+        base_amount=float(row["base_amount"] or row["amount"] or 0),
+        discount=int(row["discount"] or 0),
+        coupon=(row["coupon"] or ""),
         created_at=_parse(row["created_at"]),
         expires_at=_parse(row["expires_at"]),
         paid_at=_parse(row["paid_at"]),
@@ -177,7 +228,8 @@ def _pick_amount(base: float, taken: set) -> float:
 
 # --- синхронные операции ----------------------------------------------------
 
-def _create_order_sync(user_id: int, days: int) -> Order:
+def _create_order_sync(user_id: int, days: int, price: float,
+                       discount: int = 0, coupon: str = "") -> Order:
     now = _now()
     conn = _open()
     try:
@@ -190,12 +242,14 @@ def _create_order_sync(user_id: int, days: int) -> Order:
         if row is not None:
             raise OrderExists(_row_to_order(row))
 
-        amount = _pick_amount(PRICE_RUB, _active_amounts(conn, now))
+        amount = _pick_amount(final_price(price, discount), _active_amounts(conn, now))
         expires_at = now + timedelta(minutes=ORDER_TTL_MINUTES)
         cur = conn.execute(
-            """INSERT INTO orders (user_id, amount, days, status, created_at, expires_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (user_id, amount, days, STATUS_NEW, _fmt(now), _fmt(expires_at)),
+            """INSERT INTO orders (user_id, amount, base_amount, discount, coupon,
+                                  days, status, created_at, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, amount, price, discount, coupon,
+             days, STATUS_NEW, _fmt(now), _fmt(expires_at)),
         )
         conn.commit()
         order = _row_to_order(
@@ -290,8 +344,11 @@ def _expire_all_sync() -> int:
 
 # --- асинхронная обёртка ----------------------------------------------------
 
-async def create_order(user_id: int, days: int) -> Order:
-    return await asyncio.to_thread(_create_order_sync, user_id, days)
+async def create_order(user_id: int, days: int, price: float = PRICE_RUB,
+                       discount: int = 0, coupon: str = "") -> Order:
+    return await asyncio.to_thread(
+        _create_order_sync, user_id, days, price, discount, coupon
+    )
 
 
 async def get(order_id: int) -> Optional[Order]:

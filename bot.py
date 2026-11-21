@@ -58,6 +58,7 @@ import backup
 import calories
 import diary
 import content as topics
+import coupons
 import exercises
 import orders
 import progress
@@ -739,6 +740,23 @@ async def cmd_start(message: Message) -> None:
         return
     await message.answer(PUBLIC_START_TEXT, reply_markup=_public_menu())
 
+    if message.from_user:
+        try:
+            coupon, created = await coupons.ensure(message.from_user.id)
+        except Exception:  # noqa: BLE001 — купон не должен ломать /start
+            logger.exception("Не удалось выдать купон")
+            return
+        if created and coupon.active:
+            await message.answer(
+                "🎁 <b>Подарок на старт</b>\n\n"
+                f"Купон <b>{coupon.code}</b> даёт −{coupon.percent}% на первую оплату. "
+                f"Действует до {coupon.expires_at:%d.%m}.\n\n"
+                "Скидка применится автоматически при оформлении.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="Посмотреть тарифы", callback_data="sub:menu")
+                ]]),
+            )
+
 
 @pay_router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
@@ -753,7 +771,8 @@ async def cmd_help(message: Message) -> None:
 @pay_router.callback_query(F.data == "sub:menu")
 async def cb_sub_menu(callback: CallbackQuery) -> None:
     status = await subs.get_status(callback.from_user.id)
-    text, markup = _sub_screen(status)
+    coupon = await coupons.active(callback.from_user.id)
+    text, markup = _sub_screen(status, coupon)
     if callback.message:
         try:
             await callback.message.answer(text, reply_markup=markup)
@@ -1654,7 +1673,7 @@ async def on_error(event: ErrorEvent) -> bool:
 # ---------------------------------------------------------------------------
 # Подписка: триал и оплата переводом
 # ---------------------------------------------------------------------------
-def _sub_screen(status: "subs.Status") -> tuple:
+def _sub_screen(status: "subs.Status", coupon: "coupons.Coupon | None" = None) -> tuple:
     """Текст и кнопки экрана подписки для текущего статуса."""
     lines = ["<b>Подписка</b>", ""]
 
@@ -1682,18 +1701,29 @@ def _sub_screen(status: "subs.Status") -> tuple:
         manual = bool(orders.PAYMENT_LINK or orders.qr_file())
     action = "Продлить" if status.active else "Оформить"
 
-    if manual:
-        rows.append([
-            InlineKeyboardButton(
-                text=f"{action} на {subs.SUBSCRIPTION_DAYS} дней · {orders.PRICE_RUB:.0f} ₽",
-                callback_data="order:new",
-            )
+    if coupon is not None and coupon.active:
+        lines.extend([
+            "",
+            f"🎁 Купон <b>{coupon.code}</b>: −{coupon.percent}% на первую оплату, "
+            f"действует до {coupon.expires_at:%d.%m}.",
         ])
+
+    if manual:
+        for plan in orders.PLANS:
+            price = plan.price
+            if coupon is not None and coupon.active:
+                price = orders.final_price(price, coupon.percent)
+            rows.append([
+                InlineKeyboardButton(
+                    text=f"{action} {plan.label} · {price:.0f} ₽",
+                    callback_data=f"order:new:{plan.id}",
+                )
+            ])
         if status.active:
             lines.extend([
                 "",
-                f"<i>Оплата заранее добавляет {subs.SUBSCRIPTION_DAYS} дней "
-                "к текущей дате окончания, ничего не сгорает.</i>",
+                "<i>Оплата заранее добавляет дни к текущей дате окончания, "
+                "ничего не сгорает.</i>",
             ])
 
     if not manual:
@@ -1706,7 +1736,8 @@ def _sub_screen(status: "subs.Status") -> tuple:
 @pay_router.message(Command("sub"))
 async def cmd_sub(message: Message) -> None:
     status = await subs.get_status(message.from_user.id)
-    text, markup = _sub_screen(status)
+    coupon = await coupons.active(message.from_user.id)
+    text, markup = _sub_screen(status, coupon)
     await message.answer(text, reply_markup=markup)
 
 
@@ -1725,7 +1756,8 @@ async def cb_sub_trial(callback: CallbackQuery) -> None:
         status = await subs.get_status(callback.from_user.id)
         await callback.answer("Пробный период уже был использован", show_alert=True)
 
-    text, markup = _sub_screen(status)
+    coupon = await coupons.active(callback.from_user.id)
+    text, markup = _sub_screen(status, coupon)
     if callback.message:
         try:
             await callback.message.edit_text(text, reply_markup=markup)
@@ -1743,6 +1775,11 @@ def _order_text(order: "orders.Order") -> str:
         f"<b>Заказ #{order.short}</b>",
         "",
         f"Сумма: <b>{order.amount_str} ₽</b> (переведите ровно столько)",
+        *(
+            [f"Скидка {order.discount}% по купону {order.coupon}: "
+             f"обычная цена {order.base_amount:.0f} ₽"]
+            if order.discount else []
+        ),
         f"Заявка действует до {until} по МСК, потом её нужно оформлять заново.",
         "",
     ]
@@ -1783,7 +1820,12 @@ async def _notify_owner(order: "orders.Order", user, bot: Bot) -> None:
     text = (
         f"💰 <b>Заявка #{order.short}</b>\n"
         f"Сумма: <b>{order.amount_str} ₽</b>\n"
-        f"Пользователь: {html.escape(who)} (id {order.user_id})\n"
+        + (
+            f"Скидка {order.discount}% по купону {order.coupon} "
+            f"(обычная цена {order.base_amount:.0f} ₽)\n"
+            if order.discount else ""
+        )
+        + f"Пользователь: {html.escape(who)} (id {order.user_id})\n"
         f"Срок: {order.days} дн.\n\n"
         "Проверьте перевод в выписке и подтвердите."
     )
@@ -1868,11 +1910,20 @@ async def _daily_backup(bot: Bot) -> None:
         await _send_db_backup(bot, "Ежедневный бэкап базы")
 
 
-@pay_router.callback_query(F.data == "order:new")
+@pay_router.callback_query(F.data.startswith("order:new"))
 async def cb_order_new(callback: CallbackQuery) -> None:
+    parts = (callback.data or "").split(":")
+    plan = orders.get_plan(parts[2] if len(parts) > 2 else "1m")
+    coupon = await coupons.active(callback.from_user.id)
     already = False
     try:
-        order = await orders.create_order(callback.from_user.id, subs.SUBSCRIPTION_DAYS)
+        order = await orders.create_order(
+            callback.from_user.id,
+            plan.days,
+            plan.price,
+            coupon.percent if coupon else 0,
+            coupon.code if coupon else "",
+        )
         already = False
     except orders.OrderExists as exc:
         order = exc.order
@@ -1956,6 +2007,8 @@ async def cb_order_approve(callback: CallbackQuery) -> None:
     )
     try:
         order = await orders.review(order_id, callback.from_user.id, approve=True)
+        if order.coupon:
+            await coupons.mark_used(order.user_id)
     except (orders.OrderNotFound, orders.OrderExpired) as exc:
         await callback.answer(f"Доступ выдан, но заявку закрыть не вышло: {exc}", show_alert=True)
         return
