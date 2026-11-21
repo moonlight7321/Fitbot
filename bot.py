@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Union
@@ -104,6 +105,61 @@ class TopicRotation:
         topic = self._topics[self._index % len(self._topics)]
         self._index += 1
         return topic
+
+
+_ALLOWED_COMMANDS = {"start", "help", "sub", "app", "paysupport"}
+_ALLOWED_CALLBACK_PREFIXES = ("sub:", "order:")
+_redirect_seen: Dict[int, float] = {}
+
+
+class MiniAppOnlyMiddleware(BaseMiddleware):
+    """Пускает только подписку, помощь и приложение.
+
+    План, анкета, дневник, калории, прогресс, напоминания и редактор тренировок
+    переехали в мини-апп. Старые команды и кнопки не удалены из кода, но сюда
+    не доходят: пользователь получает короткое перенаправление.
+    """
+
+    async def __call__(self, handler, event, data):
+        is_callback = isinstance(event, CallbackQuery) or hasattr(event, "data")
+        if not is_callback:
+            text = (getattr(event, "text", "") or "").strip()
+            command = ""
+            if text.startswith("/"):
+                command = text.split()[0][1:].split("@")[0].lower()
+            if command in _ALLOWED_COMMANDS or text in {BTN_SUB, BTN_HELP, BTN_APP}:
+                return await handler(event, data)
+
+            user_id = event.from_user.id if event.from_user else 0
+            now = time.monotonic()
+            if now - _redirect_seen.get(user_id, 0) > 5:
+                _redirect_seen[user_id] = now
+                markup = None
+                if ctx.settings.webapp_url:
+                    markup = InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(
+                            text="📱 Открыть приложение",
+                            web_app=WebAppInfo(url=ctx.settings.webapp_url),
+                        )
+                    ]])
+                try:
+                    await event.answer(
+                        "План, дневник и прогресс теперь в приложении.",
+                        reply_markup=markup,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("Не удалось ответить перенаправлением")
+            return
+
+        callback_data = event.data or ""
+        if callback_data.startswith(_ALLOWED_CALLBACK_PREFIXES):
+            return await handler(event, data)
+
+        try:
+            await event.answer("Это действие теперь в приложении", show_alert=False)
+        except Exception:  # noqa: BLE001
+            logger.debug("Не удалось ответить на старую кнопку")
+        return
 
 
 class _Context:
@@ -511,6 +567,7 @@ PUBLIC_START_TEXT = (
     "<b>Привет! Это сервис тренировок и питания.</b>\n\n"
     "Здесь будут планы тренировок под ваши параметры и цель, расчёт калорий "
     "и техника упражнений.\n\n"
+    "• /app — открыть приложение: план, дневник, прогресс\n"
     "• /sub — подписка и бесплатный пробный период\n"
     "• /help — справка\n\n"
     "Первую неделю можно попробовать бесплатно."
@@ -518,6 +575,7 @@ PUBLIC_START_TEXT = (
 
 PUBLIC_HELP_TEXT = (
     "<b>Справка</b>\n\n"
+    "/app — открыть приложение: план, дневник, прогресс\n"
     "/sub — подписка: пробный период, оплата, статус доступа\n"
     "/help — эта справка\n\n"
     "Доступ открывается на 30 дней после оплаты. "
@@ -2848,32 +2906,23 @@ async def _send_workout_reminders(bot: Bot) -> None:
         plan = planner.build(profile)
         if not plan.days:
             continue
-        index = profile.weekdays.index(weekday) % len(plan.days)
-        day = plan.days[index]
-        weights = await _plan_weights(profile.user_id, profile, plan)
 
-        lines = [f"<b>Сегодня: день {index + 1} · {day.title}</b>", ""]
-        for n, slot in enumerate(day.slots, 1):
-            target = weights.get(slot.exercise.slug) or {}
-            suffix = f" · {target['label']}" if target.get("label") else ""
-            reps_text = target.get("reps") or slot.reps
-            lines.append(
-                f"{n}. {slot.exercise.name_ru} — "
-                f"{planner.sets_phrase(slot.sets, reps_text, profile.goal, slot.exercise.timed)}{suffix}"
-            )
-        lines.append("")
-        lines.append("<i>Отметьте результат после тренировки — тогда прогрессия сработает.</i>")
-
-        markup = InlineKeyboardMarkup(
-            inline_keyboard=[[
-                InlineKeyboardButton(text="✅ Всё по плану", callback_data=f"wk:done:{index}"),
-                InlineKeyboardButton(text="✍️ Детали", callback_data=f"wk:day:{index}"),
-                InlineKeyboardButton(text="🟡 Частично", callback_data=f"wk:part:{index}"),
-                InlineKeyboardButton(text="😕 Не смог", callback_data=f"wk:none:{index}"),
-            ]]
-        )
+        markup = None
+        if ctx.settings.webapp_url:
+            markup = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="📱 Открыть приложение",
+                    web_app=WebAppInfo(url=ctx.settings.webapp_url),
+                )
+            ]])
         try:
-            await bot.send_message(profile.user_id, "\n".join(lines), reply_markup=markup)
+            await bot.send_message(
+                profile.user_id,
+                "Пора на тренировку 🏋️\n\n"
+                "План и отметка подходов — в приложении. "
+                "Загляните, чтобы не терять серию.",
+                reply_markup=markup,
+            )
         except Exception:  # noqa: BLE001
             logger.warning("Не смог отправить напоминание о тренировке %s", profile.user_id)
             continue
@@ -3424,6 +3473,10 @@ async def main() -> None:
     # Вешаем на роутер, а не на весь Dispatcher, иначе не пройдут платежи.
     router.message.outer_middleware(OwnerOnlyMiddleware())
     router.callback_query.outer_middleware(OwnerOnlyMiddleware())
+
+    # Публичная часть: только подписка, помощь и приложение
+    pay_router.message.outer_middleware(MiniAppOnlyMiddleware())
+    pay_router.callback_query.outer_middleware(MiniAppOnlyMiddleware())
 
     ctx.settings = settings
     ctx.ai = DeepSeekClient(settings)
