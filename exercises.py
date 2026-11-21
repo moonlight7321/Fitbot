@@ -47,7 +47,8 @@ class Exercise:
     @property
     def timed(self) -> bool:
         """Упражнение на удержание: измеряется в секундах, а не повторениях."""
-        return self.slug in {"Plank", "Side_Bridge", "Superman"} or "Plank" in self.slug
+        # «Супермен» — динамика: поднял, задержал на 2 с, опустил. Это повторения.
+        return self.slug in {"Plank", "Side_Bridge"} or "Plank" in self.slug
 
     def images(self) -> List[Path]:
         folder = MEDIA_DIR / self.slug
