@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import io
 import json
@@ -337,7 +338,12 @@ def _generate_sync(prompt: str) -> bytes:
         )
         file_id = _extract_file_id(response.choices[0].message.content)
         image = gc.get_image(file_id)
-        return image.content
+        raw = image.content
+        if isinstance(raw, str):
+            # GigaChat отдаёт base64-строку; дальше работаем с байтами
+            data = raw.split(",", 1)[1] if raw.startswith("data:") else raw
+            raw = base64.b64decode("".join(data.split()))
+        return raw
 
 
 async def fetch_image(prompt: str, settings, category: str | None = None,
