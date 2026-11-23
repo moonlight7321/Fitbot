@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -195,9 +196,10 @@ def log_build_info() -> None:
     Вызывать ТОЛЬКО после logging.basicConfig(): на импорте модуля обработчиков
     ещё нет, и INFO-сообщение молча теряется.
     """
+    key_fp = hashlib.sha256(AUTH_KEY.encode()).hexdigest()[:8] if AUTH_KEY else "нет ключа"
     logger.info(
-        "image_gen: модель=%s, таймаут=%s c, ретраи=%s, вариации промта включены",
-        MODEL, TIMEOUT, RETRIES,
+        "image_gen: модель=%s, таймаут=%s c, ретраи=%s, ключ=%s, вариации промта включены",
+        MODEL, TIMEOUT, RETRIES, key_fp,
     )
 
 _last_combos: List[Tuple[str, ...]] = []
@@ -346,6 +348,7 @@ async def fetch_image(prompt: str, settings, category: str | None = None,
         logger.error("Не задан GIGACHAT_AUTH_KEY в .env")
         return None
     logger.info("Промт картинки: %s", text)
+    fallback: Optional[bytes] = None
 
     for attempt in (1, 2):
         current = text if attempt == 1 else (text + ", чёткая композиция, без артефактов")[:MAX_PROMPT_CHARS]
@@ -363,6 +366,9 @@ async def fetch_image(prompt: str, settings, category: str | None = None,
                 logger.warning("Техническая проверка не прошла: %s", reason)
                 continue
 
+        # Картинка технически годная: запоминаем как запасной вариант
+        fallback = data
+
         ok, reason = await check_image_semantics(data, topic)
         if not ok:
             logger.warning("Смысловая проверка не прошла: %s", reason)
@@ -370,5 +376,8 @@ async def fetch_image(prompt: str, settings, category: str | None = None,
 
         return data
 
-    logger.error("Картинка не прошла проверки после двух попыток — публикую без неё")
+    if fallback is not None:
+        logger.warning("Проверки не пропустили картинку, но публикую её как запасной вариант")
+        return fallback
+    logger.error("Картинку получить не удалось — публикую без неё")
     return None
