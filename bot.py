@@ -531,9 +531,10 @@ _ALLOWED_POST_TAGS = {"b", "i", "u", "s", "blockquote", "br"}
 
 
 def design_post(text: str) -> str:
-    """Делает первую строку заголовком, если модель не оформила её сама."""
+    """Делает первую строку заголовком и меняет маркеры списка на галочки."""
     if not text:
         return ""
+    text = text.replace("▫️", "✅").replace("▫", "✅")
     if "<b>" in text.lower():
         return text
     lines = text.split("\n")
