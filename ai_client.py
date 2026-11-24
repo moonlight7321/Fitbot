@@ -148,7 +148,9 @@ def check_length(text: str, minimum: int, maximum: int) -> Optional[str]:
     Считаем в символах Python (кодпоинтах): эмодзи = 1. Telegram считает
     UTF-16, но запас в диапазоне 250–400 перекрывает это расхождение.
     """
-    length = len(text)
+    # Теги не считаем: лимит про видимый текст
+    visible = re.sub(r"<[^>]+>", "", text)
+    length = len(visible)
     if length < minimum:
         return f"коротко: {length} из {minimum}–{maximum} символов"
     if length > maximum:

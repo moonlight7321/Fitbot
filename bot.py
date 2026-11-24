@@ -527,6 +527,40 @@ def _remember(content: GeneratedContent) -> str:
 
 
 
+_ALLOWED_POST_TAGS = {"b", "i", "u", "s", "blockquote", "br"}
+
+
+def design_post(text: str) -> str:
+    """Делает первую строку заголовком, если модель не оформила её сама."""
+    if not text:
+        return ""
+    if "<b>" in text.lower():
+        return text
+    lines = text.split("\n")
+    for index, line in enumerate(lines):
+        if line.strip():
+            if not line.lstrip().startswith("<"):
+                lines[index] = f"<b>{line.strip()}</b>"
+            break
+    return "\n".join(lines)
+
+
+def sanitize_post_html(text: str) -> str:
+    """Оставляет только безопасные теги Telegram, остальное экранирует."""
+    parts = re.split(r"(<[^>]+>)", text or "")
+    result = []
+    for part in parts:
+        if part.startswith("<") and part.endswith(">"):
+            match = re.fullmatch(r"</?([a-zA-Z]+)>", part)
+            if match and match.group(1).lower() in _ALLOWED_POST_TAGS:
+                result.append(part.lower())
+            else:
+                result.append(html.escape(part))
+        else:
+            result.append(html.escape(part, quote=False))
+    return "".join(result)
+
+
 async def send_content(
     bot: Bot,
     chat_id: Union[int, str],
@@ -535,7 +569,7 @@ async def send_content(
     offer_publish: bool = False,
 ) -> None:
     """Картинка с подписью-постом + отдельное сообщение с проверкой."""
-    caption = html.escape(content.post)
+    caption = sanitize_post_html(design_post(content.post))
     if len(caption) > CAPTION_LIMIT:
         caption = caption[: CAPTION_LIMIT - 1] + "…"
 
@@ -579,7 +613,7 @@ def _image_bytes(raw):
 
 async def publish_to_channel(bot: Bot, chat_id: Union[int, str], content: GeneratedContent) -> None:
     """Публикует только пост с картинкой: проверка — служебная информация."""
-    caption = html.escape(content.post)
+    caption = sanitize_post_html(design_post(content.post))
     if len(caption) > CAPTION_LIMIT:
         caption = caption[: CAPTION_LIMIT - 1] + "…"
     if content.image:
