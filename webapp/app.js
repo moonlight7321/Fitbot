@@ -501,7 +501,7 @@ function sparkline(series) {
   const dots = points.map((p, i) => {
     const cx = padL + i * step, cy = y(p.weight);
     return '<circle class="point-dot" cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1)
-      + '" r="3.2" fill="#4f8cff" data-info="' + esc(info[i] || "") + '" />';
+      + '" r="3.2" fill="#c9ff3b" data-info="' + esc(info[i] || "") + '" />';
   }).join('');
 
   let secondLine = '';
@@ -510,12 +510,12 @@ function sparkline(series) {
       (padL + i * step).toFixed(1) + ',' + y2(value).toFixed(1)).join(' ');
     const secondDots = second.map((value, i) =>
       '<circle cx="' + (padL + i * step).toFixed(1) + '" cy="' + y2(value).toFixed(1)
-      + '" r="2.4" fill="#f0a94c" pointer-events="none" />').join('');
-    secondLine = '<polyline points="' + secondCoords + '" fill="none" stroke="#f0a94c" '
+      + '" r="2.4" fill="#ff5b36" pointer-events="none" />').join('');
+    secondLine = '<polyline points="' + secondCoords + '" fill="none" stroke="#ff5b36" '
       + 'stroke-width="2" />' + secondDots
-      + '<text x="' + (w - 2) + '" y="' + (padT + 8) + '" font-size="9" fill="#f0a94c" text-anchor="end">'
+      + '<text x="' + (w - 2) + '" y="' + (padT + 8) + '" font-size="9" fill="#ff5b36" text-anchor="end">'
       + secondMax + ' повт.</text>'
-      + '<text x="' + (w - 2) + '" y="' + (h - padB - 2) + '" font-size="9" fill="#f0a94c" text-anchor="end">'
+      + '<text x="' + (w - 2) + '" y="' + (h - padB - 2) + '" font-size="9" fill="#ff5b36" text-anchor="end">'
       + secondMin + ' повт.</text>';
   }
   const coords = points.map((p, i) =>
@@ -526,14 +526,14 @@ function sparkline(series) {
   if (series.baseline) {
     const baselineY = y(Number(series.baseline)).toFixed(1);
     baselineLine = '<line x1="' + padL + '" y1="' + baselineY + '" x2="' + (w - padR)
-      + '" y2="' + baselineY + '" stroke="#8a94a6" stroke-width="1.5" stroke-dasharray="3 4" />';
+      + '" y2="' + baselineY + '" stroke="#6f7a8a" stroke-width="1.5" stroke-dasharray="3 4" />';
   }
 
   let trendLine = '';
   if (trend.length > 1) {
     const trendCoords = trend.map((p, i) =>
       (padL + i * step).toFixed(1) + ',' + y(p.weight).toFixed(1)).join(' ');
-    trendLine = '<polyline points="' + trendCoords + '" fill="none" stroke="#f0a94c" '
+    trendLine = '<polyline points="' + trendCoords + '" fill="none" stroke="#8b5cff" '
       + 'stroke-width="2" stroke-dasharray="5 4" />';
   }
   // До шести подписанных дат, равномерно по истории
@@ -545,12 +545,12 @@ function sparkline(series) {
   const uniqueTicks = tickIndexes.filter((v, i) => tickIndexes.indexOf(v) === i);
   const grid = uniqueTicks.map(i =>
     '<line x1="' + (padL + i * step).toFixed(1) + '" y1="' + padT + '" x2="'
-    + (padL + i * step).toFixed(1) + '" y2="' + (h - padB) + '" stroke="#232a33" stroke-width="1" />'
+    + (padL + i * step).toFixed(1) + '" y2="' + (h - padB) + '" stroke="#202531" stroke-width="1" />'
   ).join('');
   const labels = uniqueTicks.map((i, order) => {
     const x = padL + i * step;
     const anchor = order === 0 ? 'start' : (order === uniqueTicks.length - 1 ? 'end' : 'middle');
-    return '<text x="' + x.toFixed(1) + '" y="' + (h - 8) + '" font-size="10" fill="#8b94a3" text-anchor="'
+    return '<text x="' + x.toFixed(1) + '" y="' + (h - 8) + '" font-size="10" fill="#9aa6b8" text-anchor="'
       + anchor + '">' + shortDate(points[i].date) + '</text>';
   }).join('');
 
@@ -565,8 +565,8 @@ function sparkline(series) {
     + ' · точек: ' + points.length + '</div>'
     + (second.length > 1
         ? '<div class="muted" style="margin-top:4px">'
-          + '<span style="color:#4f8cff">● вес</span> · '
-          + '<span style="color:#f0a94c">● повторения</span></div>'
+          + '<span style="color:#c9ff3b">● вес</span> · '
+          + '<span style="color:#ff5b36">● повторения</span></div>'
         : '')
     + (info.length
         ? '<div class="point-info muted" data-point-info>Нажмите на точку, чтобы увидеть вес и повторения</div>'
@@ -578,9 +578,9 @@ function sparkline(series) {
     + '<svg viewBox="0 0 ' + w + ' ' + h + '">'
     + grid
     + '<line x1="' + padL + '" y1="' + (h - padB) + '" x2="' + (w - padR) + '" y2="' + (h - padB)
-    + '" stroke="#2c343f" stroke-width="1" />'
+    + '" stroke="#2a3140" stroke-width="1" />'
     + baselineLine
-    + '<polyline points="' + coords + '" fill="none" stroke="#4f8cff" stroke-width="2.5" />'
+    + '<polyline points="' + coords + '" fill="none" stroke="#c9ff3b" stroke-width="2.5" />'
     + trendLine
     + secondLine
     + dots
@@ -943,7 +943,7 @@ function renderProgressTab(data) {
     + '<label class="chk" style="margin-top:8px"><input type="checkbox" id="weight-reminder"'
     + (data.weight_reminder ? ' checked' : '') + '> Напоминать о взвешивании раз в две недели</label>'
     + (data.weight_suggest
-        ? '<div class="card" style="margin-top:10px;background:#232a33">'
+        ? '<div class="card" style="margin-top:10px;background:#171b25">'
           + '<div class="muted">Вес изменился с ' + data.weight_suggest.profile_weight
           + ' до ' + data.weight_suggest.weight + ' кг. Обновить норму калорий?</div>'
           + '<button class="primary" id="weight-suggest" style="margin-top:6px">Обновить анкету</button>'
