@@ -31,6 +31,7 @@ load_dotenv()
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -547,19 +548,48 @@ def design_post(text: str) -> str:
 
 
 def sanitize_post_html(text: str) -> str:
-    """Оставляет только безопасные теги Telegram, остальное экранирует."""
-    parts = re.split(r"(<[^>]+>)", text or "")
-    result = []
+    """Оставляет безопасные теги Telegram и закрывает незакрытые.
+
+    Обрезка длинного поста может разрезать вёрстку посередине — тогда
+    Telegram отклоняет сообщение («Can't find end tag»). Поэтому стек
+    открытых тегов закрывается автоматически, а обрывок тега в конце
+    отбрасывается.
+    """
+    source = re.sub(r"<[^>]*$", "", text or "")
+    parts = re.split(r"(<[^>]+>)", source)
+    result: list = []
+    stack: list = []
+
     for part in parts:
         if part.startswith("<") and part.endswith(">"):
             match = re.fullmatch(r"</?([a-zA-Z]+)>", part)
-            if match and match.group(1).lower() in _ALLOWED_POST_TAGS:
-                result.append(part.lower())
-            else:
+            if not match or match.group(1).lower() not in _ALLOWED_POST_TAGS:
                 result.append(html.escape(part))
+                continue
+            name = match.group(1).lower()
+            if part.startswith("</"):
+                if stack and stack[-1] == name:
+                    stack.pop()
+                    result.append(f"</{name}>")
+                # одиночный закрывающий тег просто выбрасываем
+                continue
+            if name == "br":
+                result.append("<br>")
+            else:
+                stack.append(name)
+                result.append(f"<{name}>")
         else:
             result.append(html.escape(part, quote=False))
+
+    while stack:
+        result.append(f"</{stack.pop()}>")
     return "".join(result)
+
+
+def _plain_caption(caption: str) -> str:
+    """Убирает HTML-теги — запасной вариант, если Telegram не принял вёрстку."""
+    plain = html.unescape(re.sub(r"</?[a-zA-Z]+>", "", caption))
+    return plain[:CAPTION_LIMIT]
 
 
 async def send_content(
@@ -617,14 +647,28 @@ async def publish_to_channel(bot: Bot, chat_id: Union[int, str], content: Genera
     caption = sanitize_post_html(design_post(content.post))
     if len(caption) > CAPTION_LIMIT:
         caption = caption[: CAPTION_LIMIT - 1] + "…"
-    if content.image:
-        await bot.send_photo(
-            chat_id,
-            photo=BufferedInputFile(_image_bytes(content.image), filename="post.jpg"),
-            caption=caption,
-        )
-    else:
-        await bot.send_message(chat_id, caption)
+    try:
+        if content.image:
+            await bot.send_photo(
+                chat_id,
+                photo=BufferedInputFile(_image_bytes(content.image), filename="post.jpg"),
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await bot.send_message(chat_id, caption, parse_mode=ParseMode.HTML)
+    except TelegramBadRequest as exc:
+        logger.error("Публикация с вёрсткой не удалась (%s) — повторяю простым текстом", exc)
+        plain = _plain_caption(caption)
+        if content.image:
+            await bot.send_photo(
+                chat_id,
+                photo=BufferedInputFile(_image_bytes(content.image), filename="post.jpg"),
+                caption=plain,
+                parse_mode=None,
+            )
+        else:
+            await bot.send_message(chat_id, plain, parse_mode=None)
 
 
 # ---------------------------------------------------------------------------

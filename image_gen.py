@@ -276,7 +276,11 @@ def _vision_check_sync(data: bytes, topic: str) -> Tuple[bool, str]:
         max_retries=0,
         verify_ssl_certs=False,
     ) as gc:
-        uploaded = gc.upload_file(io.BytesIO(data), purpose="general")
+        mime = "image/png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
+        filename = "image.png" if mime == "image/png" else "image.jpg"
+        # GigaChat ждёт имя и MIME: с BytesIO без типа он отвечает
+        # «File format application/octet-stream is not supported»
+        uploaded = gc.upload_file((filename, data, mime), purpose="general")
         file_id = getattr(uploaded, "id_", None) or getattr(uploaded, "id", "")
         response = gc.chat({
             "model": VISION_MODEL,
